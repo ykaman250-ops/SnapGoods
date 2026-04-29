@@ -1,0 +1,213 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ==========================================
+    // GLOBAL SAFETY NET
+    // ==========================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==========================================
+    // GLOBAL HELPERS
+    // ==========================================
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        request.auth.token.get('email', '') in [
+          'adminrajpura@nvgroup.co.in',
+          'ykaman250@gmail.com',
+          'amammehra121@gmail.com',
+          'nvrajpura@nvgroup.co.in'
+        ] ||
+        request.auth.uid in [
+          'D0wKH0KjXehG2WQXzSLvwbZIVn53',
+          'Ov2UpLIRcoZ3Z1VRMFS6rxrYcL52'
+        ]
+      );
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    function getUserOrgId() {
+      return request.auth.token.get('orgId', 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) 
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('orgId', null)
+        : null
+      );
+    }
+
+    function getUserRole() {
+      return isSuperAdmin() ? 'superadmin' : request.auth.token.get('role', 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'viewer')
+        : 'viewer'
+      );
+    }
+
+    function isOrgMember() {
+      return isSignedIn() && (isSuperAdmin() || getUserOrgId() != null);
+    }
+
+    function isOrgAdmin() {
+      return isSignedIn() && (isSuperAdmin() || getUserRole() in ['owner', 'admin']);
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && (isSuperAdmin() || request.auth.uid == userId);
+    }
+
+    // Tenant Isolation
+    function isSameOrg(orgId) {
+      return isSuperAdmin() || (orgId != null && orgId == getUserOrgId());
+    }
+
+    function belongsToUserOrg() {
+      return isSuperAdmin() || (isOrgMember() && isSameOrg(resource.data.get('orgId', null)));
+    }
+
+    function creatingForUserOrg() {
+      return isSuperAdmin() || (isOrgMember() && isSameOrg(request.resource.data.get('orgId', null)));
+    }
+
+    // ==========================================
+    // VALIDATION BLUEPRINTS
+    // ==========================================
+    
+    function isValidAsset(data) {
+      return data.keys().hasAll(['name', 'category', 'status', 'orgId']) &&
+             data.name is string && data.name.size() <= 200 &&
+             data.category is string && data.category.size() <= 100 &&
+             data.status is string && data.status.size() <= 50 &&
+             (isSuperAdmin() || data.orgId == getUserOrgId()) &&
+             (data.get('customData', null) == null || data.customData is map);
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'name', 'role', 'status', 'orgId']) &&
+             data.email is string && data.email.size() <= 200 &&
+             data.name is string && data.name.size() <= 200 &&
+             data.role in ['owner', 'admin', 'manager', 'viewer', 'superadmin'] &&
+             isSameOrg(data.orgId);
+    }
+
+    function isValidConfigItem(data) {
+      return (data.get('name', null) == null || (data.name is string && data.name.size() > 0)) &&
+             (data.get('orgId', null) == null || isSameOrg(data.orgId)) &&
+             (data.get('types', null) == null || data.types is list) &&
+             (data.get('assetTypes', null) == null || data.assetTypes is list);
+    }
+
+    // ==========================================
+    // COLLECTION RULES
+    // ==========================================
+
+    match /organizations/{orgId} {
+      allow read: if isSignedIn() && (orgId == getUserOrgId() || getUserRole() == 'superadmin');
+      allow create: if isSignedIn(); // For signup
+      allow update: if isOrgMember() && orgId == getUserOrgId() && (getUserRole() == 'owner' || getUserRole() == 'superadmin') &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['name', 'currency', 'updatedAt']);
+    }
+
+    match /users/{userId} {
+      // Identity isolation
+      allow get: if isOwner(userId) || isOrgAdmin();
+      allow list: if isOrgMember() && isSameOrg(resource.data.get('orgId', null));
+      
+      allow create: if isSignedIn(); // Handled by server or signup
+      allow update: if isOrgMember() && isSameOrg(resource.data.get('orgId', null)) && (
+        // Admin action: can change most things except orgId
+        (isOrgAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'status', 'name', 'preferences', 'updatedAt'])) ||
+        // Self action: only preferences
+        (isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['preferences', 'name', 'updatedAt']))
+      );
+      allow delete: if isOrgAdmin() && isSameOrg(resource.data.get('orgId', null)) && userId != request.auth.uid;
+    }
+
+    match /assets/{assetId} {
+      allow get: if isOrgMember() && isSameOrg(resource.data.get('orgId', null));
+      allow list: if isOrgMember() && isSameOrg(resource.data.get('orgId', null));
+      
+      allow create: if isOrgAdmin() && creatingForUserOrg() && isValidAsset(incoming());
+      allow update: if isOrgMember() && belongsToUserOrg() && isValidAsset(incoming()) && (
+        isOrgAdmin() || 
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'assignedTo', 'remarks', 'updatedAt'])
+      );
+      allow delete: if isOrgAdmin() && belongsToUserOrg();
+    }
+
+    match /asset_categories/{id} {
+      allow read: if isSuperAdmin() || (isOrgMember() && isSameOrg(resource.data.get('orgId', null)));
+      allow create: if isOrgAdmin() && creatingForUserOrg() && incoming().get('name', null) != null && isValidConfigItem(incoming());
+      allow update: if isOrgAdmin() && belongsToUserOrg() && isValidConfigItem(incoming());
+      allow delete: if isOrgAdmin() && belongsToUserOrg();
+    }
+
+    match /locations/{id} {
+      allow read: if isOrgMember() && isSameOrg(resource.data.get('orgId', null));
+      allow create: if isOrgAdmin() && creatingForUserOrg() && incoming().get('name', null) != null && isValidConfigItem(incoming());
+      allow update: if isOrgAdmin() && belongsToUserOrg() && isValidConfigItem(incoming());
+      allow delete: if isOrgAdmin() && belongsToUserOrg();
+    }
+
+    match /vendors/{id} {
+      allow read: if isOrgMember() && isSameOrg(resource.data.get('orgId', null));
+      allow create: if isOrgAdmin() && creatingForUserOrg() && incoming().get('name', null) != null && isValidConfigItem(incoming());
+      allow update: if isOrgAdmin() && belongsToUserOrg() && isValidConfigItem(incoming());
+      allow delete: if isOrgAdmin() && belongsToUserOrg();
+    }
+
+    match /audit_logs/{id} {
+      // Admins and SuperAdmins can read logs
+      allow read: if isOrgAdmin() && isSameOrg(resource.data.get('orgId', null));
+      allow create: if isOrgMember() && (
+        isSuperAdmin() || (
+          // Multi-tenant isolation for logs
+          incoming().get('orgId', null) == getUserOrgId() &&
+          incoming().get('action', '') in ['CREATE', 'UPDATE', 'DELETE']
+        )
+      );
+      allow update, delete: if false; // Logs are immutable
+    }
+
+    match /employees/{id} {
+      allow read: if isSuperAdmin() || (isOrgMember() && isSameOrg(resource.data.get('orgId', null)));
+      allow write: if isOrgAdmin() && (request.method == 'delete' ? belongsToUserOrg() : creatingForUserOrg());
+    }
+
+    match /asset_history/{id} {
+      allow read: if isOrgMember() && isSameOrg(resource.data.get('orgId', null));
+      allow create: if isOrgMember() && creatingForUserOrg();
+      allow update, delete: if false;
+    }
+
+    match /maintenance_logs/{id} {
+      allow read: if isOrgMember() && isSameOrg(resource.data.get('orgId', null));
+      allow create: if isOrgMember() && creatingForUserOrg();
+      allow update: if isOrgMember() && belongsToUserOrg();
+      allow delete: if isOrgAdmin() && belongsToUserOrg();
+    }
+
+    match /assignments/{id} {
+      allow read: if isOrgMember() && isSameOrg(resource.data.get('orgId', null));
+      allow create: if isOrgMember() && creatingForUserOrg();
+      allow update: if isOrgMember() && belongsToUserOrg();
+      allow delete: if isOrgAdmin() && belongsToUserOrg();
+    }
+
+    match /invites/{token} {
+      allow read: if true; // Tokens are secrets themselves
+      allow create: if isOrgAdmin();
+      allow update, delete: if isOrgAdmin();
+    }
+  }
+}

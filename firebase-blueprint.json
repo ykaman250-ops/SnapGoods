@@ -1,0 +1,196 @@
+{
+  "entities": {
+    "Organization": {
+      "title": "Organization",
+      "description": "Tenant organization",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "plan": { "type": "string" },
+        "ownerIds": { "type": "array" },
+        "userCount": { "type": "number" },
+        "currency": { "type": "string" }
+      },
+      "required": ["name", "createdBy", "createdAt", "plan", "ownerIds"]
+    },
+    "User": {
+      "title": "User",
+      "description": "System users with role-based access control.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["owner", "admin", "manager", "viewer"] },
+        "name": { "type": "string" },
+        "department": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "orgId": { "type": "string" }
+      },
+      "required": ["uid", "email", "role", "status"]
+    },
+    "Asset": {
+      "title": "Asset",
+      "description": "Enterprise assets with depreciation support.",
+      "type": "object",
+      "properties": {
+        "orgId": { "type": "string" },
+        "name": { "type": "string" },
+        "assetCode": { "type": "string", "description": "Unique asset tag per organization" },
+        "category": { "type": "string", "enum": ["IT", "Vehicle", "Machinery", "Tool", "Facility"] },
+        "type": { "type": "string" },
+        "status": { "type": "string", "enum": ["available", "assigned", "repair", "retired"] },
+        "serialNumber": { "type": "string" },
+        "purchaseDate": { "type": "string", "format": "date" },
+        "purchaseCost": { "type": "number" },
+        "vendorId": { "type": "string" },
+        "warrantyExpiry": { "type": "string", "format": "date" },
+        "locationId": { "type": "string" },
+        "assignedTo": { "type": "string", "description": "employeeId" },
+        "usefulLifeYears": { "type": "number" },
+        "salvageValue": { "type": "number" },
+        "depreciationMethod": { "type": "string", "enum": ["straight_line"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orgId", "name", "assetCode", "category", "status", "purchaseDate", "purchaseCost"]
+    },
+    "AssetCategory": {
+      "title": "AssetCategory",
+      "description": "Custom asset categories per organization.",
+      "type": "object",
+      "properties": {
+        "orgId": { "type": "string" },
+        "name": { "type": "string" },
+        "types": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orgId", "name"]
+    },
+    "Location": {
+      "title": "Location",
+      "description": "Company locations.",
+      "type": "object",
+      "properties": {
+        "orgId": { "type": "string" },
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orgId", "name"]
+    },
+    "Vendor": {
+      "title": "Vendor",
+      "description": "Suppliers and service providers.",
+      "type": "object",
+      "properties": {
+        "orgId": { "type": "string" },
+        "name": { "type": "string" },
+        "contactInfo": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orgId", "name"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Company employees for asset assignment.",
+      "type": "object",
+      "properties": {
+        "orgId": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "department": { "type": "string" },
+        "employeeCode": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orgId", "name", "email"]
+    },
+    "AssetHistory": {
+      "title": "AssetHistory",
+      "description": "Event log for specific assets.",
+      "type": "object",
+      "properties": {
+        "assetId": { "type": "string" },
+        "orgId": { "type": "string" },
+        "action": { "type": "string", "enum": ["created", "assigned", "moved", "status_changed", "updated"] },
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "performedBy": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["assetId", "orgId", "action", "performedBy", "timestamp"]
+    },
+    "MaintenanceLog": {
+      "title": "MaintenanceLog",
+      "description": "Maintenance and repair records.",
+      "type": "object",
+      "properties": {
+        "assetId": { "type": "string" },
+        "orgId": { "type": "string" },
+        "type": { "type": "string", "enum": ["service", "repair"] },
+        "date": { "type": "string", "format": "date" },
+        "cost": { "type": "number" },
+        "vendorId": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["assetId", "orgId", "type", "date", "cost"]
+    },
+    "Assignment": {
+      "title": "Assignment",
+      "description": "Record of asset assignment to an employee.",
+      "type": "object",
+      "properties": {
+        "assetId": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "assignedAt": { "type": "string", "format": "date-time" },
+        "returnedAt": { "type": "string", "format": "date-time" },
+        "orgId": { "type": "string" },
+        "condition": { "type": "string" }
+      },
+      "required": ["assetId", "employeeId", "assignedAt", "orgId"]
+    },
+    "Maintenance": {
+      "title": "Maintenance",
+      "description": "Maintenance logs for assets.",
+      "type": "object",
+      "properties": {
+        "assetId": { "type": "string" },
+        "issue": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "resolved"] },
+        "cost": { "type": "number" },
+        "loggedAt": { "type": "string", "format": "date-time" },
+        "resolvedAt": { "type": "string", "format": "date-time" },
+        "orgId": { "type": "string" },
+        "loggedBy": { "type": "string" }
+      },
+      "required": ["assetId", "issue", "status", "loggedAt", "loggedBy", "orgId"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "System-wide audit logs.",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string" },
+        "entityType": { "type": "string" },
+        "entityId": { "type": "string" },
+        "performedBy": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "orgId": { "type": "string" },
+        "details": { "type": "object" }
+      },
+      "required": ["action", "entityType", "performedBy", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/organizations/{orgId}": { "schema": "Organization", "description": "Tenant orgs" },
+    "/users/{uid}": { "schema": "User", "description": "User profiles" },
+    "/assets/{assetId}": { "schema": "Asset", "description": "Asset records" },
+    "/asset_categories/{categoryId}": { "schema": "AssetCategory", "description": "Custom categories" },
+    "/locations/{locationId}": { "schema": "Location", "description": "Company locations" },
+    "/vendors/{vendorId}": { "schema": "Vendor", "description": "Asset vendors" },
+    "/employees/{employeeId}": { "schema": "Employee", "description": "Employee records" },
+    "/asset_history/{logId}": { "schema": "AssetHistory", "description": "Asset events" },
+    "/maintenance_logs/{logId}": { "schema": "MaintenanceLog", "description": "Maintenance records" },
+    "/audit_logs/{logId}": { "schema": "AuditLog", "description": "Audit trail" }
+  }
+}
