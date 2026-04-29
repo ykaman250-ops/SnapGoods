@@ -1,8 +1,11 @@
+// @ts-ignore
 import * as logger from "firebase-functions/logger";
+// @ts-ignore
 import { onRequest } from "firebase-functions/v2/https";
 import * as admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 import express from 'express';
+// @ts-ignore
 import cors from 'cors';
 
 // Initialize Firebase Admin (Uses default credentials in Cloud Functions environment)
