@@ -63,6 +63,99 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Verify User Middleware
+  const verifyUser = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized. Missing Bearer token.' });
+    }
+
+    const token = authHeader.split('Bearer ')[1];
+    try {
+      const decodedToken = await admin.auth().verifyIdToken(token);
+      const db = getFirestore(admin.app(), databaseId);
+      const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+      let orgId = userDoc.data()?.orgId;
+      let role = userDoc.data()?.role;
+
+      if (!userDoc.exists) {
+        // Fallback for hardcoded superadmins
+        const email = decodedToken.email;
+        if (email === 'adminrajpura@nvgroup.co.in' || email === 'ykaman250@gmail.com' || email === 'amammehra121@gmail.com' || email === 'nvrajpura@nvgroup.co.in') {
+           role = 'superadmin';
+           // Give superadmin a recognizable 'all' or specific orgId if needed, but normally they query without orgId limitation if they want all.
+        } else {
+           return res.status(403).json({ error: 'User profile not found.' });
+        }
+      }
+      
+      (decodedToken as any).orgId = orgId;
+      (decodedToken as any).role = role;
+      (req as any).user = decodedToken;
+      next();
+    } catch (error: any) {
+      console.error('User Token verification failed:', error);
+      return res.status(401).json({ error: `Unauthorized. Invalid token. Internal Error: ${error.message || error}` });
+    }
+  };
+
+  app.get("/api/notifications", verifyUser, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const db = getFirestore(admin.app(), databaseId);
+      
+      let q: admin.firestore.Query = db.collection('notifications');
+      if (user.orgId) {
+         q = q.where('orgId', '==', user.orgId);
+      } else if (user.role !== 'superadmin') {
+         return res.json([]);
+      }
+      const snapshot = await q.get();
+      
+      const notifs: any[] = [];
+      snapshot.forEach(doc => {
+        const d = doc.data();
+        if (d.userId && d.userId !== user.uid) return;
+        
+        let createdAt = d.createdAt;
+        if (createdAt && typeof createdAt.toDate === 'function') {
+          createdAt = createdAt.toDate().toISOString();
+        }
+        notifs.push({ ...d, id: doc.id, createdAt });
+      });
+      notifs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      
+      res.json(notifs.slice(0, 50));
+    } catch(e: any) {
+      console.error("Fetch notifications error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/notifications/:id/read", verifyUser, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const notifId = req.params.id;
+      const db = getFirestore(admin.app(), databaseId);
+      const docRef = db.collection('notifications').doc(notifId);
+      const docSnap = await docRef.get();
+      
+      if (!docSnap.exists) return res.status(404).json({ error: 'Not found' });
+      const data = docSnap.data()!;
+      if (data.orgId !== user.orgId && user.role !== 'superadmin') return res.status(403).json({ error: 'Forbidden' });
+      if (data.userId && data.userId !== user.uid) return res.status(403).json({ error: 'Forbidden' });
+      
+      await docRef.update({
+        read: true,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      res.json({ success: true });
+    } catch(e: any) {
+      console.error("Update notification error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Verify Admin Middleware
   const verifyAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     console.log("verifyAdmin called!");
@@ -100,6 +193,16 @@ async function startServer() {
   };
 
   // API routes
+  app.get("/api/test-db", async (req, res) => {
+    try {
+      const db = getFirestore(admin.app(), databaseId);
+      const sn = await db.collection("notifications").limit(1).get();
+      res.json({ success: true, count: sn.size });
+    } catch(e: any) {
+      res.json({ success: false, error: e.message });
+    }
+  });
+
   app.get("/api/health", (req, res) => {
     res.json({ 
       status: "ok", 

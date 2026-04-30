@@ -17,6 +17,7 @@ import { Button } from './ui/button';
 import { cn } from '../lib/utils';
 import { Logo } from './Logo';
 import { UserSettings } from './UserSettings';
+import { NotificationsDropdown } from './NotificationsDropdown';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
@@ -171,6 +172,7 @@ export default function Layout() {
           <div className="flex-1" />
           
           <div className="flex items-center gap-4">
+            <NotificationsDropdown />
             <div className="hidden md:block text-right">
               <p className="text-sm font-medium text-foreground">{profile?.name}</p>
               <p className="text-xs text-muted-foreground capitalize">{profile?.role}</p>

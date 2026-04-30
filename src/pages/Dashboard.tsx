@@ -165,7 +165,7 @@ export default function Dashboard() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-foreground">Dashboard Overview</h2>
-          <p className="text-muted-foreground">Real-time status of IT assets at Rajpura Plant.</p>
+          <p className="text-muted-foreground">Real-time status of all assets across the organization.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full md:w-auto mt-2 md:mt-0">
           <Link to="/assets" className="flex-1 sm:flex-none">

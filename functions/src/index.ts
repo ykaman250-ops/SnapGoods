@@ -2,6 +2,7 @@
 import * as logger from "firebase-functions/logger";
 // @ts-ignore
 import { onRequest } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 import express from 'express';
@@ -127,3 +128,112 @@ app.delete("/api/admin/users/:uid", verifyAdmin, async (req, res) => {
 
 // Export the express app as a Firebase HTTP variable named 'api'
 export const api = onRequest({ cors: true, invoker: 'public' }, app);
+
+export const dailyAssetChecks = onSchedule({ schedule: "every day 00:00", timeoutSeconds: 300, memory: '256MiB' }, async (event) => {
+  const db = getFirestore(admin.app(), databaseId);
+  const now = new Date();
+  
+  try {
+    // 1. Process all assets to check for lifecycle/warranty/maintenance
+    const assetsSnapshot = await db.collection('assets').get();
+    
+    const batch = db.batch();
+    let updates = 0;
+    
+    for (const doc of assetsSnapshot.docs) {
+      const asset = doc.data();
+      const orgId = asset.orgId;
+      if (!orgId) continue;
+      
+      let needsUpdate = false;
+      const updatesToAsset: any = {};
+      
+      // A. WARRANTY ALERTS (Within next 7 days)
+      if (asset.warrantyExpiry) {
+        const warrantyDate = new Date(asset.warrantyExpiry);
+        const diffDays = Math.ceil((warrantyDate.getTime() - now.getTime()) / (1000 * 3600 * 24));
+        
+        if (diffDays >= 0 && diffDays <= 7 && !asset.lastWarrantyAlertSentAt) {
+          const notifRef = db.collection('notifications').doc();
+          batch.set(notifRef, {
+            orgId,
+            userId: null,
+            type: 'warranty',
+            message: `Warranty for ${asset.name} (${asset.assetCode}) is expiring in ${diffDays} days.`,
+            relatedEntityId: doc.id,
+            read: false,
+            createdAt: now.toISOString()
+          });
+          updatesToAsset.lastWarrantyAlertSentAt = now.toISOString();
+          needsUpdate = true;
+          updates++;
+        }
+      }
+      
+      // B. MAINTENANCE ALERTS (Due or overdue)
+      if (asset.nextServiceDate) {
+        const serviceDate = new Date(asset.nextServiceDate);
+        const diffDays = Math.ceil((serviceDate.getTime() - now.getTime()) / (1000 * 3600 * 24));
+        
+        if (diffDays <= 0 && !asset.lastMaintenanceAlertSentAt) {
+          const notifRef = db.collection('notifications').doc();
+          batch.set(notifRef, {
+            orgId,
+            userId: null,
+            type: 'maintenance',
+            message: `Maintenance for ${asset.name} (${asset.assetCode}) is due.`,
+            relatedEntityId: doc.id,
+            read: false,
+            createdAt: now.toISOString()
+          });
+          updatesToAsset.lastMaintenanceAlertSentAt = now.toISOString();
+          needsUpdate = true;
+          updates++;
+        }
+      }
+      
+      // C. LIFECYCLE ALERTS
+      if (asset.purchaseDate && asset.usefulLifeYears) {
+        const purchaseDate = new Date(asset.purchaseDate);
+        const endOfLifeDate = new Date(purchaseDate.getTime());
+        endOfLifeDate.setFullYear(endOfLifeDate.getFullYear() + asset.usefulLifeYears);
+        
+        const diffDays = Math.ceil((endOfLifeDate.getTime() - now.getTime()) / (1000 * 3600 * 24));
+        
+        if (diffDays <= 30 && !asset.lastLifecycleAlertSentAt) {
+          const notifRef = db.collection('notifications').doc();
+          const isExpired = diffDays <= 0;
+          batch.set(notifRef, {
+            orgId,
+            userId: null,
+            type: 'lifecycle',
+            message: isExpired ? `Asset ${asset.name} (${asset.assetCode}) has reached its end of useful life.` : `Asset ${asset.name} (${asset.assetCode}) is nearing its end of useful life (in ${Math.max(0, diffDays)} days).`,
+            relatedEntityId: doc.id,
+            read: false,
+            createdAt: now.toISOString()
+          });
+          updatesToAsset.lastLifecycleAlertSentAt = now.toISOString();
+          needsUpdate = true;
+          updates++;
+        }
+      }
+      
+      if (needsUpdate) {
+        batch.update(doc.ref, updatesToAsset);
+        // Commit batches of 500
+        if (updates >= 400) {
+          await batch.commit();
+          updates = 0;
+        }
+      }
+    }
+    
+    if (updates > 0) {
+      await batch.commit();
+    }
+    
+    logger.info(`Daily asset checks completed successfully. Processed batches.`);
+  } catch (error) {
+    logger.error('Failed to run daily asset checks', error);
+  }
+});

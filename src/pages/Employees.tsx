@@ -12,7 +12,8 @@ import {
   Briefcase,
   Laptop,
   Printer,
-  RefreshCw
+  RefreshCw,
+  MapPin
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -52,6 +53,7 @@ import { useAuth } from '../lib/auth';
 import { printTable } from '../lib/print';
 import { useDateFormatter } from '../lib/useDateFormatter';
 import { toast } from 'sonner';
+import { Location } from '../lib/types';
 
 const DEPARTMENTS = ['HR', 'Purchase', 'Accounts', 'Mechanical', 'Bottling', 'Power Plant', 'Production', 'Excise'];
 
@@ -63,7 +65,11 @@ export default function Employees() {
   const [search, setSearch] = useState('');
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<any>(null);
-  const [employeeDept, setEmployeeDept] = useState(DEPARTMENTS[0]);
+  
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [employeeLocation, setEmployeeLocation] = useState('');
+  const [employeeDept, setEmployeeDept] = useState('');
+  
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
   
   // Assets view state
@@ -97,6 +103,7 @@ export default function Employees() {
   useEffect(() => {
     if (!profile || !organization) return;
     loadEmployees();
+    api.list('locations').then(res => setLocations(res as Location[]));
     
     api.listPaginated('assignments', [where('status', '==', 'active')], 100).then(res => setAllAssignments(res.docs));
     api.listPaginated('assets', [where('status', '==', 'assigned')], 100).then(res => setAllAssets(res.docs));
@@ -121,8 +128,8 @@ export default function Employees() {
     const assets = getEmployeeAssets(employee.id);
     const assetList = assets.map(a => `- ${a.brand || ''} ${a.model || ''} (${a.assetCode || a.tag || 'Unknown'})`).join('\r\n');
     
-    const subject = encodeURIComponent('IT Asset Management Update');
-    const body = encodeURIComponent(`Hi ${employee.name},\r\n\r\nThis is an update regarding your assigned IT assets.\r\n\r\nCurrently assigned assets:\r\n${assetList || 'No assets currently assigned.'}\r\n\r\nRegards,\r\nIT Department`);
+    const subject = encodeURIComponent('Asset Management Update');
+    const body = encodeURIComponent(`Hi ${employee.name},\r\n\r\nThis is an update regarding your assigned assets.\r\n\r\nCurrently assigned assets:\r\n${assetList || 'No assets currently assigned.'}\r\n\r\nRegards,\r\nManagement`);
     
     window.location.href = `mailto:${employee.email}?subject=${subject}&body=${body}`;
   };
@@ -196,7 +203,8 @@ export default function Employees() {
     const formData = new FormData(e.currentTarget);
     const data = {
       ...Object.fromEntries(formData.entries()),
-      department: employeeDept
+      department: employeeDept,
+      locationId: employeeLocation
     } as any;
     const employeeCode = data.employeeCode as string;
     
@@ -287,7 +295,8 @@ export default function Employees() {
             setIsAddOpen(open);
             if (!open) {
               setEditingEmployee(null);
-              setEmployeeDept(DEPARTMENTS[0]);
+              setEmployeeLocation('');
+              setEmployeeDept('');
             }
           }}>
             <DialogTrigger render={
@@ -325,20 +334,31 @@ export default function Employees() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Department</label>
-                    <Select value={employeeDept} onValueChange={setEmployeeDept}>
+                    <label className="text-sm font-medium">Location</label>
+                    <Select value={employeeLocation} onValueChange={(val) => { setEmployeeLocation(val); setEmployeeDept(''); }}>
                       <SelectTrigger>
-                        <SelectValue />
+                        <SelectValue placeholder="Select Location" />
                       </SelectTrigger>
                       <SelectContent>
-                        {DEPARTMENTS.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                        {locations.map(l => <SelectItem key={l.id} value={l.id!}>{l.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Designation</label>
-                    <Input name="designation" defaultValue={editingEmployee?.designation} required placeholder="IT Manager" />
+                    <label className="text-sm font-medium">Department</label>
+                    <Select value={employeeDept} onValueChange={setEmployeeDept} disabled={!employeeLocation}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select Department" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {locations.find(l => l.id === employeeLocation)?.departments?.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>) || <SelectItem value="_none" disabled>No departments</SelectItem>}
+                      </SelectContent>
+                    </Select>
                   </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Designation</label>
+                  <Input name="designation" defaultValue={editingEmployee?.designation} required placeholder="IT Manager" />
                 </div>
                 <DialogFooter className="pt-4">
                   <Button type="submit" disabled={isSubmitting} className="w-full bg-primary hover:bg-primary/90 text-primary-foreground">
@@ -395,6 +415,7 @@ export default function Employees() {
               </TableHead>
               <TableHead className="font-semibold">Code</TableHead>
               <TableHead className="font-semibold">Employee</TableHead>
+              <TableHead className="font-semibold">Location</TableHead>
               <TableHead className="font-semibold">Department</TableHead>
               <TableHead className="font-semibold">Designation</TableHead>
               <TableHead className="font-semibold">Status</TableHead>
@@ -404,11 +425,11 @@ export default function Employees() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Loading employees...</TableCell>
+                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Loading employees...</TableCell>
               </TableRow>
             ) : filteredEmployees.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No employees found.</TableCell>
+                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No employees found.</TableCell>
               </TableRow>
             ) : filteredEmployees.map((employee) => (
               <TableRow key={employee.id} className="hover:bg-muted transition-colors">
@@ -455,9 +476,15 @@ export default function Employees() {
                   </div>
                 </TableCell>
                 <TableCell>
+                  <div className="flex items-center gap-2 text-sm text-foreground font-medium">
+                    <MapPin className="w-4 h-4 text-muted-foreground/70" />
+                    {locations.find(l => l.id === employee.locationId)?.name || '-'}
+                  </div>
+                </TableCell>
+                <TableCell>
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Building2 className="w-4 h-4 text-muted-foreground/70" />
-                    {employee.department}
+                    {employee.department || '-'}
                   </div>
                 </TableCell>
                 <TableCell>
@@ -487,7 +514,8 @@ export default function Employees() {
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => {
                         setEditingEmployee(employee);
-                        setEmployeeDept(employee.department);
+                        setEmployeeLocation(employee.locationId || '');
+                        setEmployeeDept(employee.department || '');
                         setIsAddOpen(true);
                       }}>
                         <Edit2 className="w-4 h-4 mr-2" /> Edit Details

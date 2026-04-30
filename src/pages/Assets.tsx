@@ -531,6 +531,19 @@ export default function Assets() {
     }
   };
 
+  const getLifecycleStatus = (asset: Asset) => {
+    if (!asset.purchaseDate || !asset.usefulLifeYears) return { state: 'Unknown', color: 'bg-muted text-muted-foreground' };
+    const purchaseDate = new Date(asset.purchaseDate);
+    const eolDate = new Date(purchaseDate.getTime());
+    eolDate.setFullYear(eolDate.getFullYear() + asset.usefulLifeYears);
+    const now = new Date();
+    const diffDays = Math.ceil((eolDate.getTime() - now.getTime()) / (1000 * 3600 * 24));
+    
+    if (diffDays <= 0) return { state: 'Expired', color: 'bg-destructive/10 text-destructive', eolDate: eolDate.toISOString().split('T')[0] };
+    if (diffDays <= 30) return { state: 'Near End of Life', color: 'bg-amber-500/10 text-amber-600', eolDate: eolDate.toISOString().split('T')[0] };
+    return { state: 'Active', color: 'bg-emerald-500/10 text-emerald-600', eolDate: eolDate.toISOString().split('T')[0] };
+  };
+
   const getStatusBadge = (status: string) => {
     const variants: any = {
       available: 'bg-green-100 text-green-700 border-green-200',
@@ -1046,6 +1059,10 @@ export default function Assets() {
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Warranty Expiry</label>
                   <Input name="warrantyExpiry" type="date" defaultValue={editingAsset?.warrantyExpiry} />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Next Service Date</label>
+                  <Input name="nextServiceDate" type="date" defaultValue={editingAsset?.nextServiceDate} />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Vendor</label>
@@ -1655,7 +1672,7 @@ export default function Assets() {
           </DialogHeader>
           {viewingAsset && (
             <Tabs defaultValue="details" className="w-full">
-              <TabsList className="grid w-full grid-cols-5 bg-muted/50 p-1 rounded-lg">
+              <TabsList className="grid w-full grid-cols-6 bg-muted/50 p-1 rounded-lg">
                 <TabsTrigger value="details">General</TabsTrigger>
                 <TabsTrigger value="assign">Assignment</TabsTrigger>
                 <TabsTrigger value="financial">Financials</TabsTrigger>
@@ -1683,6 +1700,18 @@ export default function Assets() {
                   <div><p className="text-sm text-muted-foreground">Location</p><p className="font-medium">{locations.find(l => l.id === viewingAsset.locationId)?.name || '-'}</p></div>
                   <div><p className="text-sm text-muted-foreground">Department</p><p className="font-medium">{viewingAsset.department || '-'}</p></div>
                   <div><p className="text-sm text-muted-foreground">Vendor</p><p className="font-medium">{vendors.find(v => v.id === viewingAsset.vendorId)?.name || '-'}</p></div>
+                  <div><p className="text-sm text-muted-foreground">Next Service Date</p><p className="font-medium">{viewingAsset.nextServiceDate || '-'}</p></div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Lifecycle Status</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className={cn("px-2.5 py-0.5 rounded-full text-xs font-semibold border", getLifecycleStatus(viewingAsset).color)}>
+                        {getLifecycleStatus(viewingAsset).state}
+                      </span>
+                      {getLifecycleStatus(viewingAsset).eolDate && (
+                        <span className="text-xs text-muted-foreground">EOL: {getLifecycleStatus(viewingAsset).eolDate}</span>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </TabsContent>
 

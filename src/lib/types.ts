@@ -15,11 +15,15 @@ export interface Asset {
   purchaseCost: number;
   vendorId?: string;
   warrantyExpiry?: string;
+  nextServiceDate?: string;
   locationId?: string;
   department?: string;
   assignedTo?: string; // employeeId
   remarks?: string;
   usefulLifeYears: number;
+  lastLifecycleAlertSentAt?: string;
+  lastMaintenanceAlertSentAt?: string;
+  lastWarrantyAlertSentAt?: string;
   salvageValue: number;
   depreciationMethod: 'straight_line' | 'wdv';
   customData?: Record<string, any>;
@@ -76,9 +80,32 @@ export interface Employee {
   orgId: string;
   name: string;
   email: string;
+  locationId?: string;
   department?: string;
   employeeCode?: string;
   createdAt: string;
+}
+
+export interface AppNotification {
+  id?: string;
+  orgId: string;
+  userId?: string | null;
+  type: 'warranty' | 'maintenance' | 'lifecycle' | 'billing';
+  message: string;
+  relatedEntityId?: string; // assetId or orgId
+  read: boolean;
+  createdAt: string;
+}
+
+export interface Organization {
+  id?: string;
+  name: string;
+  ownerId: string;
+  plan?: string;
+  billing?: {
+    nextBillingDate?: string;
+  };
+  createdAt?: string;
 }
 
 export interface AssetHistory {

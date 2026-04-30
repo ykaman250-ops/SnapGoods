@@ -12,7 +12,7 @@ export default defineConfig(({mode}) => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon-192.png', 'icon-512.png'],
+        includeAssets: ['icon-192.png', 'icon-512.png', 'icon.svg'],
         manifest: {
           name: 'AssetHive Asset Manager',
           short_name: 'AssetHive',
@@ -32,6 +32,12 @@ export default defineConfig(({mode}) => {
               src: '/icon-512.png',
               sizes: '512x512',
               type: 'image/png',
+              purpose: 'any maskable'
+            },
+            {
+              src: '/icon.svg',
+              sizes: 'any',
+              type: 'image/svg+xml',
               purpose: 'any maskable'
             }
           ]
