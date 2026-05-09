@@ -15,10 +15,10 @@ export interface UserPreferences {
 export interface UserProfile {
   uid: string;
   email: string;
-  role: 'owner' | 'admin' | 'manager' | 'viewer' | 'superadmin';
   name: string;
   status: 'active' | 'inactive' | 'frozen';
-  orgId?: string;
+  activeOrgId?: string;
+  orgRoles: Record<string, string>;
   preferences?: UserPreferences;
 }
 
@@ -41,6 +41,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   updateProfile: (data: Partial<UserProfile>) => Promise<void>;
   refreshContext: () => Promise<void>;
+  switchOrganization: (orgId: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -70,126 +71,79 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const docRef = doc(db, 'users', currentUser.uid);
       const docSnap = await getDoc(docRef);
+      const isSuperAdminEmail = ['adminrajpura@nvgroup.co.in', 'ykaman250@gmail.com', 'amammehra121@gmail.com', 'nvrajpura@nvgroup.co.in'].includes(currentUser.email || '');
       
+      let userData: UserProfile | null = null;
+
       if (docSnap.exists()) {
-        const userData = { ...docSnap.data(), uid: docSnap.id } as UserProfile;
-        console.log("Found user profile:", userData);
+        userData = { ...docSnap.data(), uid: docSnap.id } as UserProfile;
+        
+        // Handle migration from old format
+        if ((userData as any).orgId && !(userData as any).orgRoles) {
+            userData.orgRoles = { [(userData as any).orgId]: (userData as any).role || 'viewer' };
+            userData.activeOrgId = (userData as any).orgId;
+            delete (userData as any).orgId;
+            delete (userData as any).role;
+            await setDoc(docRef, userData);
+        }
+      } else if (isSuperAdminEmail) {
+        // Create super admin profile if it doesn't exist
+        const orgsSnap = await getDocs(query(collection(db, 'organizations'), limit(1)));
+        let orgId = '';
+        if (!orgsSnap.empty) {
+          orgId = orgsSnap.docs[0].id;
+        } else {
+          orgId = generateHumanId('organizations');
+          await setDoc(doc(db, 'organizations', orgId), {
+            name: 'Main Organization',
+            currency: 'INR',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+        }
+
+        userData = {
+          uid: currentUser.uid,
+          email: currentUser.email || '',
+          name: currentUser.displayName || 'Super Admin',
+          status: 'active',
+          orgRoles: { [orgId]: 'superadmin' },
+          activeOrgId: orgId
+        };
+        await setDoc(docRef, userData);
+      }
+
+      if (userData) {
         setProfile(userData);
         
-        if (userData.orgId) {
-          setApiOrgId(userData.orgId);
-          const orgRef = doc(db, 'organizations', userData.orgId);
+        let targetOrgId = userData.activeOrgId;
+        // Fallback to first org role if activeOrgId is not set
+        if (!targetOrgId && userData.orgRoles && Object.keys(userData.orgRoles).length > 0) {
+            targetOrgId = Object.keys(userData.orgRoles)[0];
+            await updateProfileObj({ activeOrgId: targetOrgId });
+        }
+
+        if (targetOrgId) {
+          setApiOrgId(targetOrgId);
+          const orgRef = doc(db, 'organizations', targetOrgId);
           const orgSnap = await getDoc(orgRef);
           if (orgSnap.exists()) {
-            const orgData = { id: orgSnap.id, ...orgSnap.data() } as Organization;
-            console.log("Found organization:", orgData);
-            setOrganization(orgData);
-          }
-        } else if (currentUser.email === 'adminrajpura@nvgroup.co.in' || currentUser.email === 'ykaman250@gmail.com' || currentUser.email === 'amammehra121@gmail.com' || currentUser.email === 'nvrajpura@nvgroup.co.in') {
-          console.log("Super admin detected, checking for organizations...");
-          // If superadmin has no orgId, try to find one
-          const orgsSnap = await getDocs(query(collection(db, 'organizations'), limit(1)));
-          if (!orgsSnap.empty) {
-            const firstOrg = orgsSnap.docs[0];
-            const orgId = firstOrg.id;
-            console.log("Found organization for super admin:", orgId);
-            setApiOrgId(orgId);
-            setOrganization({ id: orgId, ...firstOrg.data() } as Organization);
-            
-            // Ensure user document exists with orgId and superadmin role
-            await setDoc(doc(db, 'users', currentUser.uid), { 
-              email: currentUser.email,
-              name: currentUser.displayName || 'Super Admin',
-              role: 'superadmin',
-              status: 'active',
-              orgId,
-              updatedAt: serverTimestamp()
-            }, { merge: true });
-            
-            setProfile({ 
-              uid: currentUser.uid,
-              email: currentUser.email!,
-              name: currentUser.displayName || 'Super Admin',
-              role: 'superadmin',
-              status: 'active',
-              orgId 
-            });
+            setOrganization({ id: orgSnap.id, ...orgSnap.data() } as Organization);
           } else {
-            console.log("No organizations found, creating default for super admin...");
-            // Create a default organization if none exist
-            const orgId = generateHumanId('organizations');
-            const newOrgRef = doc(db, 'organizations', orgId);
-            await setDoc(newOrgRef, {
-              name: 'Main Organization',
-              currency: 'INR',
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp()
-            });
-            setApiOrgId(orgId);
-            setOrganization({ id: orgId, name: 'Main Organization', currency: 'INR' } as Organization);
-            
-            await setDoc(doc(db, 'users', currentUser.uid), { 
-              email: currentUser.email,
-              name: currentUser.displayName || 'Super Admin',
-              role: 'superadmin',
-              status: 'active',
-              orgId,
-              updatedAt: serverTimestamp()
-            }, { merge: true });
-            
-            setProfile({ 
-              uid: currentUser.uid,
-              email: currentUser.email!,
-              name: currentUser.displayName || 'Super Admin',
-              role: 'superadmin',
-              status: 'active',
-              orgId 
-            });
+            console.warn("Active organization not found in DB.");
+            setOrganization(null);
           }
         } else {
           setApiOrgId(null);
+          setOrganization(null);
         }
       } else {
-        // Required for backwards compatibility / local testing if user is new
-        if (currentUser.email === 'adminrajpura@nvgroup.co.in' || currentUser.email === 'ykaman250@gmail.com' || currentUser.email === 'amammehra121@gmail.com' || currentUser.email === 'nvrajpura@nvgroup.co.in') {
-          // Check for existing organization
-          let orgId = null;
-          const orgsSnap = await getDocs(query(collection(db, 'organizations'), limit(1)));
-          if (!orgsSnap.empty) {
-            const firstOrg = orgsSnap.docs[0];
-            orgId = firstOrg.id;
-            setOrganization({ id: orgId, ...firstOrg.data() } as Organization);
-          } else {
-            orgId = generateHumanId('organizations');
-            const newOrgRef = doc(db, 'organizations', orgId);
-            await setDoc(newOrgRef, {
-              name: 'Main Organization',
-              currency: 'INR',
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp()
-            });
-            setOrganization({ id: orgId, name: 'Main Organization', currency: 'INR' } as Organization);
-          }
-
-          const newProfile: UserProfile = {
-            uid: currentUser.uid,
-            email: currentUser.email || '',
-            role: 'superadmin',
-            name: currentUser.displayName || 'Super Admin',
-            status: 'active',
-            orgId: orgId
-          };
-          setProfile(newProfile);
-          await setDoc(docRef, newProfile);
-          setApiOrgId(orgId);
-        } else {
-          console.error("User authenticated but no profile found in database.");
-           await signOut(auth);
-           setUser(null);
-           setProfile(null);
-           setOrganization(null);
-           setApiOrgId(null);
-        }
+        console.error("User authenticated but no profile found in database.");
+        await signOut(auth);
+        setUser(null);
+        setProfile(null);
+        setOrganization(null);
+        setApiOrgId(null);
       }
     } catch(err) {
       console.error("Auth state change error:", err);
@@ -205,6 +159,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       try {
         if (currentUser) {
+          setLoading(true);
           console.log("Auth state change: User detected", currentUser.email, currentUser.uid);
           setUser(currentUser);
           try {
@@ -244,11 +199,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const updateProfileObj = async (data: Partial<UserProfile>) => {
     if (!user || !profile) return;
     
-    // Safety check
-    if (profile.email === 'adminrajpura@nvgroup.co.in' && Object.keys(data).includes('role')) {
-      if (data.role !== 'owner') throw new Error("Cannot modify super admin role.");
-    }
-    
     const updatedProfile = { ...profile, ...data };
     setProfile(updatedProfile);
     
@@ -261,8 +211,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const switchOrganization = async (orgId: string) => {
+    if (!profile) return;
+    if (!profile.orgRoles || !(orgId in profile.orgRoles)) {
+        throw new Error("User does not have access to this organization.");
+    }
+
+    await updateProfileObj({ activeOrgId: orgId });
+    await refreshContext();
+  };
+
   return (
-    <AuthContext.Provider value={{ user, profile, organization, loading, logout, updateProfile: updateProfileObj, refreshContext }}>
+    <AuthContext.Provider value={{ user, profile, organization, loading, logout, updateProfile: updateProfileObj, refreshContext, switchOrganization }}>
       {children}
     </AuthContext.Provider>
   );

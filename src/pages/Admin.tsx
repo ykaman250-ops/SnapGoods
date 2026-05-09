@@ -98,7 +98,7 @@ export default function Admin() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const { docs: usersData } = await api.listPaginated('users', [where('orgId', '==', organization?.id)], 100);
+      const { docs: usersData } = await api.listPaginated('users', [where(`orgRoles.${organization?.id}`, 'in', ['admin', 'manager', 'viewer', 'owner', 'superadmin'])], 100);
       setUsers(usersData);
       
       const { docs: logsData } = await api.listPaginated('audit_logs', [where('orgId', '==', organization?.id), orderBy('timestamp', 'desc')], 100);
@@ -181,7 +181,7 @@ export default function Admin() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ email, name, password, role })
+        body: JSON.stringify({ email, name, password, role, orgId: organization?.id })
       });
 
       const data = await res.json();
@@ -207,7 +207,7 @@ export default function Admin() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ role: newRole })
+        body: JSON.stringify({ role: newRole, orgId: organization?.id })
       });
       
       const data = await res.json();
@@ -1068,7 +1068,10 @@ export default function Admin() {
                   {users.map((user) => {
                     const isSelf = user.id === profile?.uid || user.id === auth.currentUser?.uid || user.email === profile?.email || user.email === auth.currentUser?.email;
                     const isSuperAdmin = user.email === 'adminrajpura@nvgroup.co.in' || user.email === 'ykaman250@gmail.com';
-                    const canManageUser = profile?.role === 'owner' || (profile?.role === 'admin' && user.role !== 'owner' && user.role !== 'admin');
+                    const userRole = user.orgRoles?.[organization?.id as string] || 'viewer';
+                    const profileRole = profile?.orgRoles?.[organization?.id as string] || 'viewer';
+                    const canManageUser = profileRole === 'owner' || profileRole === 'superadmin' || 
+                                          (profileRole === 'admin' && userRole !== 'owner' && userRole !== 'admin');
                     
                     return (
                     <TableRow key={user.id}>
@@ -1090,7 +1093,7 @@ export default function Admin() {
                       <TableCell>{user.email}</TableCell>
                       <TableCell>
                         <Select 
-                          value={user.role || 'viewer'} 
+                          value={userRole} 
                           onValueChange={(val) => handleRoleChange(user.id, val)}
                           disabled={isSelf || isSuperAdmin || !canManageUser}
                         >
@@ -1098,8 +1101,8 @@ export default function Admin() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {profile?.role === 'owner' && <SelectItem value="owner">Owner</SelectItem>}
-                            {profile?.role === 'owner' && <SelectItem value="admin">Admin</SelectItem>}
+                            {(profileRole === 'owner' || profileRole === 'superadmin') && <SelectItem value="owner">Owner</SelectItem>}
+                            {(profileRole === 'owner' || profileRole === 'superadmin') && <SelectItem value="admin">Admin</SelectItem>}
                             <SelectItem value="manager">Manager</SelectItem>
                             <SelectItem value="viewer">Viewer</SelectItem>
                           </SelectContent>
@@ -1174,7 +1177,7 @@ export default function Admin() {
                       }
 
                       // Delete via Backend API to ensure it deletes both Auth and Firestore securely
-                      const res = await fetch(`/api/admin/users/${userToDelete.id}`, {
+                      const res = await fetch(`/api/admin/users/${userToDelete.id}?orgId=${organization?.id}`, {
                         method: 'DELETE',
                         headers: {
                           'Authorization': `Bearer ${await auth.currentUser?.getIdToken()}`

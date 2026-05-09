@@ -18,12 +18,14 @@ import AssetPrint from './pages/AssetPrint';
 import Landing from './pages/Landing';
 import Reports from './pages/Reports';
 import Inventory from './pages/Inventory';
+import { LoadingScreen } from './components/LoadingScreen';
 
 function ProtectedRoute({ children, requiredRole, forbiddenRoles }: { children: React.ReactNode, requiredRole?: string, forbiddenRoles?: string[] }) {
   const { user, profile, loading, logout } = useAuth();
 
-  if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  if (loading) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" />;
+  if (user && !profile) return <LoadingScreen />;
   
   if (profile?.status === 'frozen') {
     return (
@@ -61,11 +63,13 @@ function ProtectedRoute({ children, requiredRole, forbiddenRoles }: { children: 
     );
   }
 
-  if (forbiddenRoles && profile?.role && forbiddenRoles.includes(profile.role)) {
+  const activeRole = profile?.activeOrgId && profile.orgRoles ? profile.orgRoles[profile.activeOrgId] : null;
+
+  if (forbiddenRoles && activeRole && forbiddenRoles.includes(activeRole)) {
     return <Navigate to="/dashboard" />;
   }
 
-  if (requiredRole && profile?.role !== requiredRole && profile?.role !== 'admin' && profile?.role !== 'owner' && profile?.role !== 'superadmin') {
+  if (requiredRole && activeRole !== requiredRole && activeRole !== 'admin' && activeRole !== 'owner' && activeRole !== 'superadmin') {
     return <Navigate to="/" />;
   }
 
@@ -118,7 +122,8 @@ function ThemeProvider({ children }: { children: React.ReactNode }) {
 
 function RootRedirect() {
   const { user, profile, loading } = useAuth();
-  if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  if (loading) return <LoadingScreen />;
+  if (user && !profile) return <LoadingScreen />;
   if (user && profile) return <Navigate to="/dashboard" />;
   return <Landing />;
 }

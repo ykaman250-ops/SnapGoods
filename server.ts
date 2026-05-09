@@ -84,8 +84,8 @@ async function startServer() {
       const decodedToken = await admin.auth().verifyIdToken(token);
       const db = getFirestore(admin.app(), databaseId);
       const userDoc = await db.collection('users').doc(decodedToken.uid).get();
-      let orgId = userDoc.data()?.orgId;
-      let role = userDoc.data()?.role;
+      let activeOrgId = userDoc.data()?.activeOrgId;
+      let role = activeOrgId && userDoc.data()?.orgRoles ? userDoc.data().orgRoles[activeOrgId] : 'viewer';
 
       if (!userDoc.exists) {
         // Fallback for hardcoded superadmins
@@ -98,7 +98,7 @@ async function startServer() {
         }
       }
       
-      (decodedToken as any).orgId = orgId;
+      (decodedToken as any).activeOrgId = activeOrgId;
       (decodedToken as any).role = role;
       (req as any).user = decodedToken;
       next();
@@ -183,11 +183,13 @@ async function startServer() {
       if (decodedToken.email !== 'adminrajpura@nvgroup.co.in' && decodedToken.email !== 'ykaman250@gmail.com' && decodedToken.email !== 'amammehra121@gmail.com' && decodedToken.email !== 'nvrajpura@nvgroup.co.in') {
         const db = getFirestore(admin.app(), databaseId);
         const userDoc = await db.collection('users').doc(decodedToken.uid).get();
-        const role = userDoc.data()?.role;
+        const activeOrgId = userDoc.data()?.activeOrgId;
+        const role = activeOrgId && userDoc.data()?.orgRoles ? userDoc.data().orgRoles[activeOrgId] : null;
+        
         if (!userDoc.exists || (role !== 'admin' && role !== 'owner')) {
           return res.status(403).json({ error: 'Forbidden. Admin access required.' });
         }
-        (decodedToken as any).orgId = userDoc.data()?.orgId;
+        (decodedToken as any).activeOrgId = activeOrgId;
         (decodedToken as any).role = role;
       } else {
         (decodedToken as any).role = 'superadmin';
@@ -364,9 +366,9 @@ app.get("/api/health", (req, res) => {
       await db.collection('users').doc(userRecord.uid).set({
         email,
         name: adminName,
-        role: 'owner',
         status: 'active',
-        orgId: orgRef.id,
+        activeOrgId: orgRef.id,
+        orgRoles: { [orgRef.id]: 'owner' },
         createdAt: admin.firestore.FieldValue.serverTimestamp()
       });
 
@@ -463,9 +465,9 @@ app.get("/api/health", (req, res) => {
       await db.collection('users').doc(userRecord.uid).set({
         email,
         name,
-        role: inviteData.role,
         status: 'active',
-        orgId: inviteData.orgId,
+        activeOrgId: inviteData.orgId,
+        orgRoles: { [inviteData.orgId]: inviteData.role },
         createdAt: admin.firestore.FieldValue.serverTimestamp()
       });
 
@@ -507,43 +509,64 @@ app.get("/api/health", (req, res) => {
       const db = getFirestore(admin.app(), databaseId);
       
       // Get the admin's true orgId
-      let adminOrgId = adminToken.orgId;
+      let adminOrgId = adminToken.activeOrgId;
       if (!adminOrgId) {
         const adminDoc = await db.collection('users').doc(adminToken.uid).get();
         if (adminDoc.exists) {
-           adminOrgId = adminDoc.data()?.orgId;
+           adminOrgId = adminDoc.data()?.activeOrgId;
         }
       }
 
-      if (!adminOrgId) {
+      if (!adminOrgId && adminToken.role !== 'superadmin') {
          return res.status(403).json({ error: 'Admin does not belong to any organization.' });
       }
 
-      // Create user in Firebase Auth
-      const userRecord = await admin.auth().createUser({
-        email,
-        emailVerified: true, // We auto-verify since the admin made it, or leave false to force them to verify.
-        password,
-        displayName: name
-      });
+      // Try to create user in Firebase Auth, or fetch if exists
+      let userRecord;
+      try {
+        userRecord = await admin.auth().createUser({
+          email,
+          emailVerified: true, // We auto-verify since the admin made it, or leave false to force them to verify.
+          password,
+          displayName: name
+        });
+      } catch (authError: any) {
+        if (authError.code === 'auth/email-already-exists') {
+          userRecord = await admin.auth().getUserByEmail(email);
+        } else {
+          throw authError; // Re-throw if it's a different error
+        }
+      }
 
-      // Create matching Firestore profile
+      // Add or update matching Firestore profile
+      const newRole = role || 'viewer';
+      const targetOrgId = adminOrgId || req.body.orgId; // Fallback if superadmin creates
+      
+      if (!targetOrgId) {
+        return res.status(400).json({ error: 'Target organization ID is required.' });
+      }
+
       await db.collection('users').doc(userRecord.uid).set({
         email,
         name,
-        role: role || 'viewer',
         status: 'active',
-        orgId: adminOrgId,
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
-      });
+        activeOrgId: targetOrgId,
+        orgRoles: { [targetOrgId]: newRole },
+      }, { merge: true });
 
       // Set Custom Claims
+      const currentClaims = userRecord.customClaims || {};
+      const newOrgRoles = currentClaims.orgRoles || {};
+      newOrgRoles[targetOrgId] = newRole;
+
       await admin.auth().setCustomUserClaims(userRecord.uid, {
-        orgId: adminOrgId,
-        role: role || 'viewer'
+        ...currentClaims,
+        orgRoles: newOrgRoles,
+        orgId: targetOrgId,
+        role: currentClaims.role || newRole
       });
 
-      res.status(201).json({ message: 'User created successfully', uid: userRecord.uid });
+      res.status(201).json({ message: 'User created or updated successfully', uid: userRecord.uid });
     } catch (error: any) {
       console.error('Error creating user:', error);
       res.status(500).json({ error: error.message || 'Internal Server Error' });
@@ -573,7 +596,7 @@ app.get("/api/health", (req, res) => {
         return res.status(400).json({ error: 'You cannot delete your own account.' });
       }
 
-      let adminOrgId = adminToken.orgId;
+      let adminOrgId = adminToken.activeOrgId;
 
       if (!adminOrgId && adminRole !== 'superadmin') {
          return res.status(403).json({ error: 'Admin does not belong to any organization.' });
@@ -585,39 +608,68 @@ app.get("/api/health", (req, res) => {
          return res.status(403).json({ error: 'Superadmin cannot be deleted.' });
       }
 
-      const targetOrgId = userDoc.data()?.orgId;
-      if (adminRole !== 'superadmin' && targetOrgId !== adminOrgId) {
-         return res.status(403).json({ error: 'Cannot delete users in other organizations.' });
+      const targetOrgId = req.query.orgId as string || adminOrgId;
+      if (!targetOrgId) {
+        return res.status(400).json({ error: 'Target organization ID is required.' });
+      }
+
+      const targetOrgRole = userDoc.data()?.orgRoles?.[targetOrgId];
+      if (adminRole !== 'superadmin' && adminOrgId !== targetOrgId) {
+         return res.status(403).json({ error: 'Cannot remove users in other organizations.' });
+      }
+      if (!targetOrgRole) {
+         return res.status(404).json({ error: 'User is not in the specified organization.' });
       }
       
       // Prevent deleting if target is owner and admin is not superadmin
-      if (adminRole === 'admin' && userDoc.data()?.role === 'owner') {
-         return res.status(403).json({ error: 'Admins cannot delete owners.' });
+      if (adminRole === 'admin' && targetOrgRole === 'owner') {
+         return res.status(403).json({ error: 'Admins cannot remove owners.' });
       }
 
       // Prevent removing last owner
-      if (userDoc.data()?.role === 'owner') {
-        const orgDoc = await db.collection('organizations').doc(adminOrgId).get();
+      if (targetOrgRole === 'owner') {
+        const orgDoc = await db.collection('organizations').doc(targetOrgId).get();
         const ownerIds = orgDoc.data()?.ownerIds || [];
         if (ownerIds.length <= 1 && ownerIds.includes(uid)) {
-          return res.status(400).json({ error: 'Cannot delete the last owner of the organization.' });
+          return res.status(400).json({ error: 'Cannot remove the last owner of the organization.' });
         }
       }
 
-      // Delete from Firebase Auth
-      await admin.auth().deleteUser(uid);
+      // Remove the orgRole from custom claims and Firestore profile.
+      await db.collection('users').doc(uid).update({
+        [`orgRoles.${targetOrgId}`]: admin.firestore.FieldValue.delete()
+      });
 
-      // Delete from Firestore
-      await db.collection('users').doc(uid).delete();
+      const authUser = await admin.auth().getUser(uid);
+      const currentClaims = authUser.customClaims || {};
+      const newOrgRoles = currentClaims.orgRoles || {};
+      delete newOrgRoles[targetOrgId];
+
+      let newActiveOrgId = currentClaims.orgId;
+      if (currentClaims.orgId === targetOrgId) {
+          newActiveOrgId = Object.keys(newOrgRoles).length > 0 ? Object.keys(newOrgRoles)[0] : null;
+      }
+
+      await admin.auth().setCustomUserClaims(uid, {
+        ...currentClaims,
+        orgRoles: newOrgRoles,
+        orgId: newActiveOrgId
+      });
+
+      if (userDoc.data()?.activeOrgId === targetOrgId) {
+          await db.collection('users').doc(uid).update({
+            activeOrgId: newActiveOrgId
+          });
+      }
 
       // If user was an owner, make sure to remove them from org ownerIds
-      if (userDoc.data()?.role === 'owner') {
-         await db.collection('organizations').doc(adminOrgId).update({
+      if (targetOrgRole === 'owner') {
+         await db.collection('organizations').doc(targetOrgId).update({
            ownerIds: admin.firestore.FieldValue.arrayRemove(uid)
          });
       }
 
-      res.status(200).json({ message: 'User deleted successfully' });
+      res.status(200).json({ message: 'User removed from organization successfully' });
     } catch (error: any) {
       console.error('Error deleting user:', error);
       res.status(500).json({ error: error.message || 'Internal Server Error' });
@@ -645,7 +697,7 @@ app.get("/api/health", (req, res) => {
 
       const db = getFirestore(admin.app(), databaseId);
       
-      const adminOrgId = adminToken.orgId;
+      const adminOrgId = adminToken.activeOrgId;
       const adminRole = adminToken.role;
 
       if (!adminOrgId && adminRole !== 'superadmin') {
@@ -659,19 +711,27 @@ app.get("/api/health", (req, res) => {
       }
 
       const userData = userDoc.data()!;
+      // Use req.body.orgId if provided, otherwise fallback to admin's active root org (or user's for superadmin)
+      const targetOrgId = req.body.orgId || (adminRole === 'superadmin' ? (userData.activeOrgId || adminOrgId) : adminOrgId);
+      
+      if (!targetOrgId) {
+        return res.status(400).json({ error: 'Target organization ID is required.' });
+      }
+      
+      const targetOrgRole = userData.orgRoles?.[targetOrgId];
 
-      if (adminRole !== 'superadmin' && userData.orgId !== adminOrgId) {
+      if (adminRole !== 'superadmin' && adminOrgId !== targetOrgId) {
          return res.status(403).json({ error: 'Cannot modify users in other organizations.' });
       }
 
       // Permissions check
-      if (adminRole === 'admin' && (userData.role === 'owner' || role === 'owner')) {
+      if (adminRole === 'admin' && (targetOrgRole === 'owner' || role === 'owner')) {
          return res.status(403).json({ error: 'Admins cannot modify owners or grant owner role.' });
       }
 
       // Last owner check
-      if (userData.role === 'owner' && role !== 'owner') {
-        const orgDoc = await db.collection('organizations').doc(userData.orgId).get();
+      if (targetOrgRole === 'owner' && role !== 'owner') {
+        const orgDoc = await db.collection('organizations').doc(targetOrgId).get();
         const ownerIds = orgDoc.data()?.ownerIds || [];
         if (ownerIds.length <= 1 && ownerIds.includes(uid)) {
           return res.status(400).json({ error: 'Cannot demote the last owner of the organization.' });
@@ -679,21 +739,30 @@ app.get("/api/health", (req, res) => {
       }
 
       // Update Firestore profile
-      await db.collection('users').doc(uid).update({ role });
+      await db.collection('users').doc(uid).update({ 
+        [`orgRoles.${targetOrgId}`]: role 
+      });
 
       // Update Claims
+      const authUser = await admin.auth().getUser(uid);
+      const currentClaims = authUser.customClaims || {};
+      const newOrgRoles = currentClaims.orgRoles || {};
+      newOrgRoles[targetOrgId] = role;
+
       await admin.auth().setCustomUserClaims(uid, {
-        orgId: userData.orgId,
-        role: role
+        ...currentClaims,
+        orgRoles: newOrgRoles,
+        orgId: targetOrgId,
+        role: currentClaims.role || role // fallback
       });
 
       // Update Org Owners Array
-      if (role === 'owner' && userData.role !== 'owner') {
-        await db.collection('organizations').doc(userData.orgId).update({
+      if (role === 'owner' && targetOrgRole !== 'owner') {
+        await db.collection('organizations').doc(targetOrgId).update({
           ownerIds: admin.firestore.FieldValue.arrayUnion(uid)
         });
-      } else if (userData.role === 'owner' && role !== 'owner') {
-        await db.collection('organizations').doc(userData.orgId).update({
+      } else if (targetOrgRole === 'owner' && role !== 'owner') {
+        await db.collection('organizations').doc(targetOrgId).update({
           ownerIds: admin.firestore.FieldValue.arrayRemove(uid)
         });
       }

@@ -470,7 +470,7 @@ export default function Assets() {
         await actionManager.executeComplex(
           `Updated asset ${finalData.name}`,
           async () => {
-             await assetService.updateAsset(editingAsset.id, finalData, profile!.orgId!, editingAsset);
+             await assetService.updateAsset(editingAsset.id, finalData, profile!.activeOrgId!, editingAsset);
           },
           async () => {
              const restoredData = { ...editingAsset, ...finalData } as Asset;
@@ -478,7 +478,7 @@ export default function Assets() {
              Object.keys(finalData).forEach(key => {
                revertUpdates[key] = (editingAsset as any)[key];
              });
-             await assetService.updateAsset(editingAsset.id, revertUpdates, profile!.orgId!, restoredData);
+             await assetService.updateAsset(editingAsset.id, revertUpdates, profile!.activeOrgId!, restoredData);
           }
         );
         const updatedDoc = await api.get('assets', editingAsset.id);
@@ -493,7 +493,7 @@ export default function Assets() {
               ...finalData, 
               status: 'available',
               depreciationMethod: assetDepreciationMethod
-            }, profile!.orgId!, newId);
+            }, profile!.activeOrgId!, newId);
           },
           async () => {
             await api.delete('assets', newId);
@@ -543,12 +543,12 @@ export default function Assets() {
       await actionManager.executeComplex(
         `Assigned asset ${assigningAsset.name}`,
         async () => {
-          await assetService.updateAsset(assigningAsset.id, updates, profile!.orgId!, assigningAsset);
+          await assetService.updateAsset(assigningAsset.id, updates, profile!.activeOrgId!, assigningAsset);
           await api.set('assignments', assignmentId, assignmentData);
         },
         async () => {
           const restoredData = { ...assigningAsset, ...updates } as Asset;
-          await assetService.updateAsset(assigningAsset.id, { status: assigningAsset.status, assignedTo: assigningAsset.assignedTo }, profile!.orgId!, restoredData);
+          await assetService.updateAsset(assigningAsset.id, { status: assigningAsset.status, assignedTo: assigningAsset.assignedTo }, profile!.activeOrgId!, restoredData);
           await api.delete('assignments', assignmentId);
         }
       );
@@ -573,16 +573,19 @@ export default function Assets() {
     e.preventDefault();
     if (!statusAsset?.id || isSubmittingRef.current) return;
 
+    const formData = new FormData(e.currentTarget);
+    const remarks = formData.get('remarks') as string;
+
     setIsSubmitting(true);
     try {
       await actionManager.executeComplex(
         `Changed status of ${statusAsset.name}`,
         async () => {
-          await assetService.updateAsset(statusAsset.id, { status: newStatus }, profile!.orgId!, statusAsset);
+          await assetService.updateAsset(statusAsset.id, { status: newStatus, remarks }, profile!.activeOrgId!, statusAsset);
         },
         async () => {
           const restoredData = { ...statusAsset, status: newStatus } as Asset;
-          await assetService.updateAsset(statusAsset.id, { status: statusAsset.status }, profile!.orgId!, restoredData);
+          await assetService.updateAsset(statusAsset.id, { status: statusAsset.status, remarks: statusAsset.remarks || '' }, profile!.activeOrgId!, restoredData);
         }
       );
 
@@ -658,7 +661,7 @@ export default function Assets() {
             status: 'assigned' as AssetStatus,
             assignedTo: assigneeType === 'employee' ? selectedEmployee : ''
           };
-          await assetService.updateAsset(assetId, updates, profile!.orgId!, asset);
+          await assetService.updateAsset(assetId, updates, profile!.activeOrgId!, asset);
           
           await api.create('assignments', {
             assetId,
@@ -696,7 +699,7 @@ export default function Assets() {
         assignedTo: ''
       };
       
-      await assetService.updateAsset(unassigningAsset.id, updates, profile!.orgId!, unassigningAsset);
+      await assetService.updateAsset(unassigningAsset.id, updates, profile!.activeOrgId!, unassigningAsset);
       
       // Update assignment record to returned
       const assignments = (await api.list('assignments')) as Assignment[];
@@ -732,7 +735,7 @@ export default function Assets() {
             status: 'available' as AssetStatus,
             assignedTo: ''
           };
-          await assetService.updateAsset(assetId, updates, profile!.orgId!, asset);
+          await assetService.updateAsset(assetId, updates, profile!.activeOrgId!, asset);
           
           const activeAssignment = allAssignments?.find(a => a.assetId === assetId && !a.returnedAt);
           if (activeAssignment && activeAssignment.id) {
@@ -767,7 +770,7 @@ export default function Assets() {
       await Promise.all(selectedAssets.map(async (assetId) => {
         const asset = assets.find(a => a.id === assetId);
         if (asset && asset.status !== 'assigned') {
-          await assetService.updateAsset(assetId, { status: newStatus }, profile!.orgId!, asset);
+          await assetService.updateAsset(assetId, { status: newStatus, remarks }, profile!.activeOrgId!, asset);
           const updatedDoc = await api.get('assets', assetId);
           if (updatedDoc) setAssets(prev => prev.map(a => a.id === assetId ? (updatedDoc as Asset) : a));
         }
@@ -1904,7 +1907,7 @@ export default function Assets() {
                                 <span className="capitalize">{l.type}</span>
                                 <span className="text-xs text-muted-foreground ml-2">{l.date}</span>
                               </div>
-                              {profile?.role && ['owner', 'admin'].includes(profile.role) && (
+                              {profile?.activeOrgId && profile?.orgRoles && ['owner', 'admin'].includes(profile.orgRoles[profile.activeOrgId]) && (
                                 <div className="flex gap-1 ml-2">
                                   <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleEditMaintenanceLogClick(l)}>
                                     <Edit2 className="w-3 h-3" />

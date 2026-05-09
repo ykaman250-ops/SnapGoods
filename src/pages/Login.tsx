@@ -4,19 +4,9 @@ import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/aut
 import { auth } from '../lib/firebase';
 import { useAuth } from '../lib/auth';
 import { toast } from 'sonner';
-import { 
-  MapPin, 
-  Building2, 
-  PieChart, 
-  Mail, 
-  Lock, 
-  ArrowRight,
-  CheckCircle2,
-  Eye,
-  EyeOff,
-  User
-} from 'lucide-react';
+import { ArrowRight, CheckCircle2, Eye, EyeOff, User, MapPin, Building2, PieChart, Mail, Lock } from 'lucide-react';
 import { Logo } from '../components/Logo';
+import { LoadingScreen } from '../components/LoadingScreen';
 
 const styles = `
   @keyframes fadeInUp {
@@ -102,9 +92,9 @@ export default function Login() {
   const [inviteToken, setInviteToken] = useState(inviteTokenParam || '');
   const [acceptInviteLoading, setAcceptInviteLoading] = useState(false);
 
-  if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  if (loading) return <LoadingScreen />;
   if (user) {
-    if (profile === undefined) return <div className="flex items-center justify-center h-screen">Loading...</div>;
+    if (!profile) return <LoadingScreen />;
     return <Navigate to={profile?.preferences?.defaultPage || "/"} />;
   }
 

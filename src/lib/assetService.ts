@@ -21,6 +21,21 @@ import { Asset, AssetHistory } from './types';
 import { generateHumanId } from './api';
 
 export const assetService = {
+  // Example of strictly enforced "Cross-Tenant Querying Tax"
+  async getAssets(activeOrgId: string) {
+    if (!activeOrgId) throw new Error("activeOrgId is required for multi-tenant querying");
+    
+    // Explicitly scope the query to the tenant using activeOrgId
+    const q = query(
+      collection(db, 'assets'),
+      where('orgId', '==', activeOrgId),
+      orderBy('createdAt', 'desc')
+    );
+    
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Asset));
+  },
+
   async createAsset(assetData: Omit<Asset, 'id' | 'createdAt' | 'updatedAt' | 'orgId'>, orgId: string, customId?: string) {
     const assetId = customId || generateHumanId('assets');
     const assetRef = doc(db, 'assets', assetId);

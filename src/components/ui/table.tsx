@@ -24,7 +24,7 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("sticky top-0 z-10 bg-muted [&_tr]:border-b shadow-sm", className)}
+      className={cn("sticky top-0 z-10 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md [&_tr]:border-b border-zinc-100 dark:border-zinc-800", className)}
       {...props}
     />
   )
@@ -58,7 +58,7 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
     <tr
       data-slot="table-row"
       className={cn(
-        "border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
+        "border-b border-zinc-100 dark:border-zinc-800/50 transition-colors hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 has-aria-expanded:bg-zinc-50/50 data-[state=selected]:bg-zinc-100 dark:data-[state=selected]:bg-zinc-800",
         className
       )}
       {...props}
@@ -74,8 +74,8 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "text-left align-middle font-medium whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0",
-        isCompact ? "h-8 px-2 text-xs" : "h-12 px-4",
+        "text-left align-middle font-medium whitespace-nowrap text-zinc-500 dark:text-zinc-400 [&:has([role=checkbox])]:pr-0",
+        isCompact ? "h-8 px-2 text-xs" : "h-10 px-4 text-xs",
         className
       )}
       {...props}
