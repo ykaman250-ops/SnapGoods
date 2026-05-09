@@ -9,11 +9,13 @@ import express from 'express';
 // @ts-ignore
 import cors from 'cors';
 
+import { GoogleGenAI, Type } from "@google/genai";
+
 // Initialize Firebase Admin (Uses default credentials in Cloud Functions environment)
 admin.initializeApp();
 
-// Load the DB ID (Defaulting to nv-rpj-db as specified in your setup)
-const databaseId = "nv-rpj-db";
+// Load the DB ID (Defaulting to snapgoods-prod as specified in your setup)
+const databaseId = "snapgoods-prod";
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -52,6 +54,102 @@ const verifyAdmin = async (req: express.Request, res: express.Response, next: ex
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', environment: 'firebase-functions' });
+});
+
+// Limit in memory requests for simple rate limiting if deployed on a single instance (better to use Firestore or a cache in prod)
+const rateLimits = new Map<string, { count: number, resetTime: number }>();
+
+app.post("/api/extract-assets", async (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  let limit = rateLimits.get(ip);
+  if (!limit || now > limit.resetTime) {
+    limit = { count: 0, resetTime: now + 60000 }; // 1 minute
+  }
+  if (limit.count >= 5) { // Max 5 per minute
+    res.status(429).json({ error: "Rate limit exceeded. Please try again later." });
+    return;
+  }
+  limit.count++;
+  rateLimits.set(ip, limit);
+
+  const { text } = req.body;
+  if (!text || typeof text !== 'string') {
+    res.status(400).json({ error: "Missing or invalid 'text' payload." });
+    return;
+  }
+  if (text.length > 2000) {
+    res.status(400).json({ error: "Input text exceeds maximum length of 2000 characters." });
+    return;
+  }
+
+  // Uses Firebase environment variable for the secret if set or process.env directly.
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    res.status(500).json({ error: "Gemini API integration isn't configured on the server." });
+    return;
+  }
+
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Extract assets from this text: "${text}"`,
+      config: {
+        systemInstruction: `You are an expert asset extractor. 
+Return ONLY a JSON object with an array named 'assets'. No markdown blocks, no explanation.
+Fields required: name, category, quantity (number), and assignedTo (Array of strings).
+Normalize asset names gracefully. Do not include any text outside the JSON structure.`,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            assets: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  category: { type: Type.STRING },
+                  quantity: { type: Type.NUMBER },
+                  assignedTo: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING }
+                  }
+                },
+                required: ["name", "category", "quantity", "assignedTo"]
+              }
+            }
+          },
+          required: ["assets"]
+        }
+      }
+    });
+
+    const rawText = response.text;
+    if (!rawText) throw new Error("No text returned from Gemini");
+
+    let parsed;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch(e) {
+       console.error("Gemini returned invalid json:", rawText);
+       res.status(500).json({ error: "AI returned invalid format." });
+       return;
+    }
+
+    res.json(parsed);
+  } catch(e: any) {
+    console.error("Extraction error:", e);
+    if (e.message?.includes("API key not valid") || e.status === 400 || String(e).includes("API_KEY_INVALID")) {
+      res.status(500).json({ 
+        error: "AI extraction is currently under maintenance. Please try again later." 
+      });
+      return;
+    }
+    res.status(500).json({ error: "Internal server error during extraction.", details: String(e) });
+  }
 });
 
 // Admin User Creation Route

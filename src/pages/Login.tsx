@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { auth } from '../lib/firebase';
@@ -43,7 +43,44 @@ const styles = `
 export default function Login() {
   const { user, profile, loading } = useAuth();
   
-  const [view, setView] = useState<'signin' | 'signup'>('signin');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialView = searchParams.get('view') === 'signup' ? 'signup' : 'signin';
+  const [view, setView] = useState<'signin' | 'signup'>(initialView);
+  
+  const signinEmailRef = useRef<HTMLInputElement>(null);
+  const orgNameRef = useRef<HTMLInputElement>(null);
+
+  // Make sure we update view if URL changes, and URL if view changes
+  useEffect(() => {
+    const currentView = searchParams.get('view') === 'signup' ? 'signup' : 'signin';
+    if (currentView !== view) {
+      setView(currentView);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    const focusTimeout = setTimeout(() => {
+      if (view === 'signin') {
+        signinEmailRef.current?.focus();
+      } else if (view === 'signup') {
+        orgNameRef.current?.focus();
+      }
+    }, 100);
+    return () => clearTimeout(focusTimeout);
+  }, [view]);
+
+  const handleSetView = (newView: 'signin' | 'signup') => {
+    setView(newView);
+    setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev);
+      if (newView === 'signup') {
+        newParams.set('view', 'signup');
+      } else {
+        newParams.delete('view');
+      }
+      return newParams;
+    });
+  };
   const [isHoveringBtn, setIsHoveringBtn] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
@@ -61,7 +98,6 @@ export default function Login() {
   const [signupLoading, setSignupLoading] = useState(false);
 
   // Invite
-  const [searchParams] = useSearchParams();
   const inviteTokenParam = searchParams.get('invite');
   const [inviteToken, setInviteToken] = useState(inviteTokenParam || '');
   const [acceptInviteLoading, setAcceptInviteLoading] = useState(false);
@@ -81,7 +117,7 @@ export default function Login() {
     try {
       setResetLoading(true);
       await sendPasswordResetEmail(auth, email);
-      toast.success('Password reset email sent! Check your inbox.');
+      toast.success('Password reset email sent! It may take a few minutes to arrive. Please check your spam folder.', { duration: 6000 });
     } catch (error: any) {
       toast.error(error.message || 'Failed to send password reset email');
     } finally {
@@ -212,7 +248,7 @@ export default function Login() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
               </span>
-              AssetHive is live
+              SnapGoods is live
             </div>
 
             <h1 className="text-4xl sm:text-5xl font-bold tracking-tight text-white mb-6 animate-fade-in-up delay-100 leading-[1.15]">
@@ -342,7 +378,7 @@ export default function Login() {
                 <div className="flex p-1 bg-muted rounded-xl mb-8">
                   <button 
                     type="button"
-                    onClick={() => setView('signin')}
+                    onClick={() => handleSetView('signin')}
                     className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all duration-200 ${
                       view === 'signin' 
                         ? 'bg-background shadow-sm text-foreground' 
@@ -353,7 +389,7 @@ export default function Login() {
                   </button>
                   <button 
                     type="button"
-                    onClick={() => setView('signup')}
+                    onClick={() => handleSetView('signup')}
                     className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all duration-200 ${
                       view === 'signup' 
                         ? 'bg-background shadow-sm text-foreground' 
@@ -377,6 +413,7 @@ export default function Login() {
                             <Building2 className="w-5 h-5" />
                           </div>
                           <input 
+                            ref={orgNameRef}
                             type="text" 
                             value={orgName}
                             onChange={(e) => setOrgName(e.target.value)}
@@ -414,6 +451,7 @@ export default function Login() {
                         <Mail className="w-5 h-5" />
                       </div>
                       <input 
+                        ref={signinEmailRef}
                         type="email" 
                         value={view === 'signin' ? email : signupEmail}
                         onChange={(e) => view === 'signin' ? setEmail(e.target.value) : setSignupEmail(e.target.value)}

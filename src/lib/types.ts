@@ -10,7 +10,9 @@ export interface Asset {
   category: AssetCategoryName | string;
   type?: string;
   status: AssetStatus;
+  quantity?: number;
   serialNumber?: string;
+  assetTag?: string;
   purchaseDate: string;
   purchaseCost: number;
   vendorId?: string;
@@ -41,6 +43,9 @@ export interface CustomFieldDefinition {
 
 export interface AssetType {
   name: string;
+  usage?: 'asset' | 'inventory' | 'both';
+  includeSerialNumber?: boolean;
+  includeAssetTag?: boolean;
   customFields?: CustomFieldDefinition[];
 }
 
@@ -48,6 +53,8 @@ export interface AssetCategory {
   id?: string;
   orgId: string;
   name: string;
+  usage?: 'asset' | 'inventory' | 'both';
+  targetStock?: number;
   assetTypes?: AssetType[];
   types?: string[]; // Keep for backward compatibility
   createdAt: string;
@@ -58,6 +65,10 @@ export interface Location {
   orgId: string;
   name: string;
   address?: string;
+  city?: string;
+  district?: string;
+  state?: string;
+  country?: string;
   pinCode?: string;
   departments?: string[];
   createdAt: string;
@@ -71,6 +82,10 @@ export interface Vendor {
   phoneNumber?: string;
   emailAddress?: string;
   address?: string;
+  bankName?: string;
+  accountName?: string;
+  accountNumber?: string;
+  ifscCode?: string;
   contactInfo?: string;
   createdAt: string;
 }
@@ -83,18 +98,41 @@ export interface Employee {
   locationId?: string;
   department?: string;
   employeeCode?: string;
+  dateOfJoining?: string;
+  dateOfLeaving?: string;
   createdAt: string;
 }
 
-export interface AppNotification {
+
+export interface InventoryItem {
   id?: string;
   orgId: string;
-  userId?: string | null;
-  type: 'warranty' | 'maintenance' | 'lifecycle' | 'billing';
-  message: string;
-  relatedEntityId?: string; // assetId or orgId
-  read: boolean;
+  name: string;
+  itemCode: string; // SKU or internal code
+  category: string;
+  type?: string;
+  locationId: string;
+  quantity: number;
+  lowStockThreshold?: number;
+  purchaseCost?: number;
+  vendorId?: string;
+  customData?: Record<string, any>;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface InventoryTransaction {
+  id?: string;
+  orgId: string;
+  itemId: string;
+  action: 'add' | 'consume' | 'audit' | 'move';
+  quantity: number; // positive for add, negative for consume
+  previousQuantity: number;
+  newQuantity: number;
+  locationId?: string; // If applicable
+  notes?: string;
+  userId: string;
+  timestamp: string;
 }
 
 export interface Organization {

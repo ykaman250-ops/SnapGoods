@@ -30,6 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { toast } from 'sonner';
+import { useActionManager } from '../lib/actionManager';
 import { AssetCategory, AssetType, CustomFieldDefinition } from '../lib/types';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Switch } from '../components/ui/switch';
@@ -103,18 +104,29 @@ export default function AssetConfiguration() {
   const [items, setItems] = useState<ConfigItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [newCategoryUsage, setNewCategoryUsage] = useState<'asset' | 'inventory' | 'both'>('asset');
   const [editingItem, setEditingItem] = useState<ConfigItem | null>(null);
   const [newName, setNewName] = useState('');
   const [newLocationAddress, setNewLocationAddress] = useState('');
+  const [newLocationCity, setNewLocationCity] = useState('');
+  const [newLocationDistrict, setNewLocationDistrict] = useState('');
+  const [newLocationState, setNewLocationState] = useState('');
+  const [newLocationCountry, setNewLocationCountry] = useState('');
   const [newLocationPinCode, setNewLocationPinCode] = useState('');
   const [newLocationDepartments, setNewLocationDepartments] = useState('');
   const [newVendorCode, setNewVendorCode] = useState('');
   const [newVendorPhone, setNewVendorPhone] = useState('');
   const [newVendorEmail, setNewVendorEmail] = useState('');
   const [newVendorAddress, setNewVendorAddress] = useState('');
+  const [newVendorBankName, setNewVendorBankName] = useState('');
+  const [newVendorAccountName, setNewVendorAccountName] = useState('');
+  const [newVendorAccountNumber, setNewVendorAccountNumber] = useState('');
+  const [newVendorIfscCode, setNewVendorIfscCode] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<AssetCategory | null>(null);
-  const [deleteConfirmation, setDeleteConfirmation] = useState<{ type: ConfigType; id: string; name?: string } | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{ type: ConfigType; id: string; name?: string; itemData?: any } | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const actionManager = useActionManager();
 
   const loadItems = async (type: ConfigType) => {
     setLoading(true);
@@ -135,49 +147,90 @@ export default function AssetConfiguration() {
   }, [activeTab, organization?.id]);
 
   const handleAdd = async () => {
-    if (!newName.trim()) return;
+    if (!newName.trim() || isSubmitting) return;
     if (!organization?.id) {
       toast.error('No organization context.');
       return;
     }
+
+    if (activeTab === 'vendors' && newVendorAccountNumber.trim()) {
+      if (!/^[a-zA-Z0-9]+$/.test(newVendorAccountNumber.trim())) {
+        toast.error('Account number must not contain special characters or spaces');
+        return;
+      }
+    }
+
+    setIsSubmitting(true);
     try {
       const data = {
         name: newName.trim(), 
         orgId: organization.id,
-        ...(activeTab === 'asset_categories' ? { assetTypes: [] } : {}),
-        ...(activeTab === 'locations' ? { address: newLocationAddress.trim(), pinCode: newLocationPinCode.trim(), departments: newLocationDepartments.split(',').map(d => d.trim()).filter(d => !!d) } : {}),
-        ...(activeTab === 'vendors' ? { vendorCode: newVendorCode.trim(), phoneNumber: newVendorPhone.trim(), emailAddress: newVendorEmail.trim(), address: newVendorAddress.trim() } : {})
+        ...(activeTab === 'asset_categories' ? { assetTypes: [], usage: newCategoryUsage } : {}),
+        ...(activeTab === 'locations' ? { 
+          address: newLocationAddress.trim(), 
+          city: newLocationCity.trim(),
+          district: newLocationDistrict.trim(),
+          state: newLocationState.trim(),
+          country: newLocationCountry.trim(),
+          pinCode: newLocationPinCode.trim(), 
+          departments: newLocationDepartments.split(',').map(d => d.trim()).filter(d => !!d) 
+        } : {}),
+        ...(activeTab === 'vendors' ? { 
+          vendorCode: newVendorCode.trim(), 
+          phoneNumber: newVendorPhone.trim(), 
+          emailAddress: newVendorEmail.trim(), 
+          address: newVendorAddress.trim(),
+          bankName: newVendorBankName.trim(),
+          accountName: newVendorAccountName.trim(),
+          accountNumber: newVendorAccountNumber.trim(),
+          ifscCode: newVendorIfscCode.trim() 
+        } : {})
       };
 
       if (editingItem && editingItem.id) {
-        await api.update(activeTab, editingItem.id, data);
-        toast.success(activeTab.slice(0, -1).replace('_', ' ') + ' updated successfully');
+        await actionManager.update(activeTab, editingItem.id, data, editingItem, activeTab.slice(0, -1).replace('_', ' ') + ' updated successfully');
       } else {
-        await api.create(activeTab, { ...data, createdAt: new Date().toISOString() });
-        toast.success(activeTab.slice(0, -1).replace('_', ' ') + ' added successfully');
+        await actionManager.create(activeTab, { ...data, createdAt: new Date().toISOString() }, activeTab.slice(0, -1).replace('_', ' ') + ' added successfully');
       }
 
       setNewName('');
       setNewLocationAddress('');
+      setNewLocationCity('');
+      setNewLocationDistrict('');
+      setNewLocationState('');
+      setNewLocationCountry('');
       setNewLocationPinCode('');
       setNewLocationDepartments('');
       setNewVendorCode('');
       setNewVendorPhone('');
       setNewVendorEmail('');
       setNewVendorAddress('');
+      setNewVendorBankName('');
+      setNewVendorAccountName('');
+      setNewVendorAccountNumber('');
+      setNewVendorIfscCode('');
       setEditingItem(null);
       setIsAddOpen(false);
       loadItems(activeTab);
     } catch (error: any) {
       toast.error(editingItem ? 'Failed to update item' : 'Failed to add item');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleEditClick = (item: ConfigItem) => {
     setEditingItem(item);
     setNewName(item.name);
+    if (activeTab === 'asset_categories') {
+      setNewCategoryUsage((item as AssetCategory).usage || 'asset');
+    }
     if (activeTab === 'locations') {
       setNewLocationAddress((item as any).address || '');
+      setNewLocationCity((item as any).city || '');
+      setNewLocationDistrict((item as any).district || '');
+      setNewLocationState((item as any).state || '');
+      setNewLocationCountry((item as any).country || '');
       setNewLocationPinCode((item as any).pinCode || '');
       setNewLocationDepartments(((item as any).departments || []).join(', '));
     }
@@ -186,11 +239,17 @@ export default function AssetConfiguration() {
       setNewVendorPhone((item as any).phoneNumber || '');
       setNewVendorEmail((item as any).emailAddress || '');
       setNewVendorAddress((item as any).address || '');
+      setNewVendorBankName((item as any).bankName || '');
+      setNewVendorAccountName((item as any).accountName || '');
+      setNewVendorAccountNumber((item as any).accountNumber || '');
+      setNewVendorIfscCode((item as any).ifscCode || '');
     }
     setIsAddOpen(true);
   };
 
   const handleDeleteClick = async (type: ConfigType, id: string) => {
+    if (isSubmitting) return;
+
     const itemToDelete = items.find(i => i.id === id);
     if (type === 'asset_categories') {
       if (itemToDelete && organization?.id) {
@@ -212,16 +271,21 @@ export default function AssetConfiguration() {
         }
       }
     }
-    setDeleteConfirmation({ type, id, name: itemToDelete?.name });
+    setDeleteConfirmation({ type, id, name: itemToDelete?.name, itemData: itemToDelete });
   };
 
   const confirmDelete = async () => {
-    if (!deleteConfirmation) return;
+    if (!deleteConfirmation || isSubmitting) return;
+    setIsSubmitting(true);
     setIsDeleting(true);
     try {
-      await api.delete(deleteConfirmation.type, deleteConfirmation.id);
+      if (deleteConfirmation.itemData) {
+        await actionManager.delete(deleteConfirmation.type, deleteConfirmation.id, deleteConfirmation.itemData, 'Item deleted successfully');
+      } else {
+        await api.delete(deleteConfirmation.type, deleteConfirmation.id);
+        toast.success('Item deleted successfully');
+      }
       loadItems(deleteConfirmation.type);
-      toast.success('Item deleted successfully');
       setDeleteConfirmation(null);
     } catch (error: any) {
       console.error('Delete failed:', error);
@@ -235,6 +299,7 @@ export default function AssetConfiguration() {
       toast.error(errorMsg);
     } finally {
       setIsDeleting(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -261,12 +326,20 @@ export default function AssetConfiguration() {
           setEditingItem(null);
           setNewName('');
           setNewLocationAddress('');
+          setNewLocationCity('');
+          setNewLocationDistrict('');
+          setNewLocationState('');
+          setNewLocationCountry('');
           setNewLocationPinCode('');
           setNewLocationDepartments('');
           setNewVendorCode('');
           setNewVendorPhone('');
           setNewVendorEmail('');
           setNewVendorAddress('');
+          setNewVendorBankName('');
+          setNewVendorAccountName('');
+          setNewVendorAccountNumber('');
+          setNewVendorIfscCode('');
           setIsAddOpen(true);
         }} className="bg-primary hover:bg-primary/90 text-primary-foreground">
           <Plus className="w-4 h-4 mr-2" /> Add New {activeTab === 'asset_categories' ? 'Category' : activeTab === 'locations' ? 'Location' : 'Vendor'}
@@ -291,7 +364,8 @@ export default function AssetConfiguration() {
                     {type === 'locations' && (
                       <>
                         <TableHead className="font-semibold">Address</TableHead>
-                        <TableHead className="font-semibold">Pin Code</TableHead>
+                        <TableHead className="font-semibold">City</TableHead>
+                        <TableHead className="font-semibold">State</TableHead>
                         <TableHead className="font-semibold">Departments</TableHead>
                       </>
                     )}
@@ -348,8 +422,12 @@ export default function AssetConfiguration() {
                       )}
                       {type === 'locations' && (
                         <>
-                          <TableCell className="text-muted-foreground">{(item as any).address || '-'}</TableCell>
-                          <TableCell className="text-muted-foreground">{(item as any).pinCode || '-'}</TableCell>
+                          <TableCell className="text-muted-foreground">{[
+                            (item as any).address,
+                            (item as any).pinCode
+                          ].filter(Boolean).join(', ') || '-'}</TableCell>
+                          <TableCell className="text-muted-foreground">{(item as any).city || '-'}</TableCell>
+                          <TableCell className="text-muted-foreground">{(item as any).state || '-'}</TableCell>
                           <TableCell>
                             <div className="flex flex-wrap gap-1">
                               {((item as any).departments || []).map((d: string) => (
@@ -405,11 +483,11 @@ export default function AssetConfiguration() {
       </Tabs>
 
       <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="max-h-[90vh] flex flex-col sm:max-w-[600px] gap-0">
+          <DialogHeader className="pb-4">
             <DialogTitle>{editingItem ? 'Edit' : 'Add New'} {activeTab.replace('_', ' ').replace('asset ', '')}</DialogTitle>
           </DialogHeader>
-          <div className="py-4 space-y-4">
+          <div className="py-2 space-y-4 overflow-y-auto min-h-0 flex-1 px-1">
             <div className="space-y-2">
               <label className="text-sm font-medium capitalize">Name</label>
               <Input 
@@ -419,15 +497,63 @@ export default function AssetConfiguration() {
                 onKeyDown={(e) => e.key === 'Enter' && activeTab !== 'locations' && handleAdd()}
               />
             </div>
+            {activeTab === 'asset_categories' && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Category Usage</label>
+                <select 
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  value={newCategoryUsage}
+                  onChange={(e) => setNewCategoryUsage(e.target.value as 'asset' | 'inventory' | 'both')}
+                >
+                  <option value="both">Both (Assets & Inventory)</option>
+                  <option value="asset">Assets Only</option>
+                  <option value="inventory">Inventory Only</option>
+                </select>
+              </div>
+            )}
             {activeTab === 'locations' && (
               <>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Address</label>
+                  <label className="text-sm font-medium">Address Line 1</label>
                   <Input 
                     value={newLocationAddress} 
                     onChange={(e) => setNewLocationAddress(e.target.value)} 
-                    placeholder="Enter full address"
+                    placeholder="Enter street address"
                   />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">City</label>
+                    <Input 
+                      value={newLocationCity} 
+                      onChange={(e) => setNewLocationCity(e.target.value)} 
+                      placeholder="Enter city"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">District</label>
+                    <Input 
+                      value={newLocationDistrict} 
+                      onChange={(e) => setNewLocationDistrict(e.target.value)} 
+                      placeholder="Enter district"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">State</label>
+                    <Input 
+                      value={newLocationState} 
+                      onChange={(e) => setNewLocationState(e.target.value)} 
+                      placeholder="Enter state"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Country</label>
+                    <Input 
+                      value={newLocationCountry} 
+                      onChange={(e) => setNewLocationCountry(e.target.value)} 
+                      placeholder="Enter country"
+                    />
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Pin Code</label>
@@ -481,13 +607,34 @@ export default function AssetConfiguration() {
                     value={newVendorAddress} 
                     onChange={(e) => setNewVendorAddress(e.target.value)} 
                     placeholder="Enter physical address"
-                    onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
                   />
+                </div>
+                
+                <div className="space-y-3 pt-4 border-t border-border mt-4">
+                  <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Account Details</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                       <label className="text-sm font-medium">Bank Name</label>
+                       <Input value={newVendorBankName} onChange={(e) => setNewVendorBankName(e.target.value)} placeholder="e.g. JPMorgan Chase" />
+                    </div>
+                    <div className="space-y-2">
+                       <label className="text-sm font-medium">Account Name</label>
+                       <Input value={newVendorAccountName} onChange={(e) => setNewVendorAccountName(e.target.value)} placeholder="e.g. Acme Corp" />
+                    </div>
+                    <div className="space-y-2">
+                       <label className="text-sm font-medium">Account Number</label>
+                       <Input value={newVendorAccountNumber} onChange={(e) => setNewVendorAccountNumber(e.target.value)} placeholder="Enter account number" />
+                    </div>
+                    <div className="space-y-2">
+                       <label className="text-sm font-medium">IFSC / Routing Code</label>
+                       <Input value={newVendorIfscCode} onChange={(e) => setNewVendorIfscCode(e.target.value)} placeholder="Enter routing code" onKeyDown={(e) => e.key === 'Enter' && handleAdd()} />
+                    </div>
+                  </div>
                 </div>
               </>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="pt-4 mt-2 border-t border-border/40">
             <Button variant="outline" onClick={() => setIsAddOpen(false)}>Cancel</Button>
             <Button onClick={handleAdd} className="bg-primary hover:bg-primary/90 text-primary-foreground">{editingItem ? 'Save Changes' : 'Add Item'}</Button>
           </DialogFooter>
@@ -522,16 +669,18 @@ function CategoryDetailView({ category, onBack }: { category: AssetCategory, onB
   const [isTypeDialogOpen, setIsTypeDialogOpen] = useState(false);
 
   const [deleteTypeConfirmation, setDeleteTypeConfirmation] = useState<string | null>(null);
+  const actionManager = useActionManager();
 
   const handleSaveCategory = async (updatedCat: AssetCategory) => {
     if (!updatedCat.id) return;
     setIsSaving(true);
     try {
-      await api.update('asset_categories', updatedCat.id, { 
+      await actionManager.update('asset_categories', updatedCat.id, { 
         name: updatedCat.name,
+        usage: updatedCat.usage || 'asset',
+        targetStock: updatedCat.targetStock || null,
         assetTypes: updatedCat.assetTypes || []
-      });
-      toast.success('Category updated successfully');
+      }, category, 'Category updated successfully');
     } catch (error) {
       toast.error('Failed to update category');
     } finally {
@@ -540,6 +689,7 @@ function CategoryDetailView({ category, onBack }: { category: AssetCategory, onB
   };
 
   const handleSaveType = async (type: AssetType) => {
+    if (isSaving) return;
     const types = [...(cat.assetTypes || [])];
     const index = types.findIndex(t => t.name === (editingType?.name || type.name));
     
@@ -579,7 +729,7 @@ function CategoryDetailView({ category, onBack }: { category: AssetCategory, onB
   };
 
   const confirmRemoveType = async () => {
-    if (!deleteTypeConfirmation) return;
+    if (!deleteTypeConfirmation || isSaving) return;
     const typeName = deleteTypeConfirmation;
     const updatedCat = {
       ...cat,
@@ -616,12 +766,38 @@ function CategoryDetailView({ category, onBack }: { category: AssetCategory, onB
             <CardDescription>Basic settings for the category.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Category Name</label>
-              <Input 
-                value={cat.name}
-                onChange={(e) => setCat({ ...cat, name: e.target.value })}
-              />
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Category Name</label>
+                <Input 
+                  value={cat.name}
+                  onChange={(e) => setCat({ ...cat, name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Category Usage</label>
+                <select 
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  value={cat.usage || 'asset'}
+                  onChange={(e) => setCat({ ...cat, usage: e.target.value as 'asset' | 'inventory' | 'both' })}
+                >
+                  <option value="both">Both (Assets & Inventory)</option>
+                  <option value="asset">Assets Only</option>
+                  <option value="inventory">Inventory Only</option>
+                </select>
+              </div>
+              {(cat.usage === 'inventory' || cat.usage === 'both') && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Average / Target Stock</label>
+                  <Input 
+                    type="number"
+                    placeholder="E.g. 50"
+                    value={cat.targetStock || ''}
+                    onChange={(e) => setCat({ ...cat, targetStock: e.target.value ? parseInt(e.target.value) : undefined })}
+                  />
+                  <p className="text-xs text-muted-foreground">Used to calculate stock health progress bars on the dashboard.</p>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -698,6 +874,7 @@ function CategoryDetailView({ category, onBack }: { category: AssetCategory, onB
         onOpenChange={setIsTypeDialogOpen}
         assetType={editingType}
         onSave={handleSaveType}
+        categoryUsage={cat.usage || 'asset'}
       />
 
       <Dialog open={!!deleteTypeConfirmation} onOpenChange={(open) => !open && setDeleteTypeConfirmation(null)}>
@@ -721,13 +898,17 @@ function CategoryDetailView({ category, onBack }: { category: AssetCategory, onB
   );
 }
 
-function AssetTypeDialog({ open, onOpenChange, assetType, onSave }: { 
+function AssetTypeDialog({ open, onOpenChange, assetType, onSave, categoryUsage = 'asset' }: { 
   open: boolean, 
   onOpenChange: (o: boolean) => void,
   assetType: AssetType | null,
-  onSave: (t: AssetType) => void
+  onSave: (t: AssetType) => void,
+  categoryUsage?: 'asset' | 'inventory' | 'both'
 }) {
   const [name, setName] = useState('');
+  const [usage, setUsage] = useState<'asset' | 'inventory' | 'both'>('asset');
+  const [includeSerialNumber, setIncludeSerialNumber] = useState(true);
+  const [includeAssetTag, setIncludeAssetTag] = useState(true);
   const [fields, setFields] = useState<CustomFieldDefinition[]>([]);
   const [newFieldName, setNewFieldName] = useState('');
   const [newFieldType, setNewFieldType] = useState<CustomFieldDefinition['type']>('text');
@@ -735,12 +916,18 @@ function AssetTypeDialog({ open, onOpenChange, assetType, onSave }: {
   useEffect(() => {
     if (assetType) {
       setName(assetType.name);
+      setUsage(assetType.usage || 'asset');
+      setIncludeSerialNumber(assetType.includeSerialNumber ?? true);
+      setIncludeAssetTag(assetType.includeAssetTag ?? true);
       setFields(assetType.customFields || []);
     } else {
       setName('');
+      setUsage(categoryUsage === 'both' ? 'asset' : categoryUsage);
+      setIncludeSerialNumber(true);
+      setIncludeAssetTag(true);
       setFields([]);
     }
-  }, [assetType, open]);
+  }, [assetType, open, categoryUsage]);
 
   const addField = () => {
     if (!newFieldName.trim()) return;
@@ -777,6 +964,38 @@ function AssetTypeDialog({ open, onOpenChange, assetType, onSave }: {
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
+          </div>
+          
+          {categoryUsage === 'both' && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Type Usage</label>
+              <select 
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                value={usage}
+                onChange={(e) => setUsage(e.target.value as 'asset' | 'inventory' | 'both')}
+              >
+                <option value="both">Both (Assets & Inventory)</option>
+                <option value="asset">Assets Only</option>
+                <option value="inventory">Inventory Only</option>
+              </select>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/40">
+              <div className="space-y-0.5">
+                <label className="text-sm font-medium">Serial Number</label>
+                <div className="text-[10px] text-muted-foreground">Include field</div>
+              </div>
+              <Switch checked={includeSerialNumber} onCheckedChange={setIncludeSerialNumber} />
+            </div>
+            <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/40">
+              <div className="space-y-0.5">
+                <label className="text-sm font-medium">Asset Tag</label>
+                <div className="text-[10px] text-muted-foreground">Include field</div>
+              </div>
+              <Switch checked={includeAssetTag} onCheckedChange={setIncludeAssetTag} />
+            </div>
           </div>
 
           <div className="space-y-4">
@@ -844,7 +1063,7 @@ function AssetTypeDialog({ open, onOpenChange, assetType, onSave }: {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={() => onSave({ name, customFields: fields })} disabled={!name.trim()}>
+          <Button onClick={() => onSave({ name, usage, customFields: fields, includeSerialNumber, includeAssetTag })} disabled={!name.trim()}>
             {assetType ? 'Update Type' : 'Add Type'}
           </Button>
         </DialogFooter>

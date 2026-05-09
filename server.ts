@@ -17,6 +17,7 @@ import admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 import dotenv from 'dotenv';
 import fs from 'fs';
+import { GoogleGenAI, Type } from "@google/genai";
 
 dotenv.config();
 
@@ -39,13 +40,21 @@ const __dirname = path.dirname(__filename);
 
 // Initialize Firebase Admin
 try {
+  const keyPath = path.join(process.cwd(), 'key.json');
   if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
       projectId: serviceAccount.project_id || projectId
     });
-    console.log("Firebase Admin Initialized Successfully");
+    console.log("Firebase Admin Initialized Successfully from ENV");
+  } else if (fs.existsSync(keyPath)) {
+    const serviceAccount = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+      projectId: serviceAccount.project_id || projectId
+    });
+    console.log("Firebase Admin Initialized Successfully from key.json");
   } else {
     // Attempt default initialization if running on Google Cloud / AI Studio managed environment
     admin.initializeApp({
@@ -193,17 +202,102 @@ async function startServer() {
   };
 
   // API routes
-  app.get("/api/test-db", async (req, res) => {
-    try {
-      const db = getFirestore(admin.app(), databaseId);
-      const sn = await db.collection("notifications").limit(1).get();
-      res.json({ success: true, count: sn.size });
-    } catch(e: any) {
-      res.json({ success: false, error: e.message });
-    }
+  app.get("/api/test-key", (req, res) => {
+    res.json({ key: process.env.GEMINI_API_KEY?.substring(0, 5) });
   });
 
-  app.get("/api/health", (req, res) => {
+// Limit in memory requests
+const rateLimits = new Map<string, { count: number, resetTime: number }>();
+
+app.post("/api/extract-assets", async (req, res) => {
+  // Simple IP/User string based rate limiting
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  let limit = rateLimits.get(ip);
+  if (!limit || now > limit.resetTime) {
+    limit = { count: 0, resetTime: now + 60000 }; // 1 minute
+  }
+  if (limit.count >= 5) { // Max 5 per minute
+    return res.status(429).json({ error: "Rate limit exceeded. Please try again later." });
+  }
+  limit.count++;
+  rateLimits.set(ip, limit);
+
+  const { text } = req.body;
+  if (!text || typeof text !== 'string') {
+    return res.status(400).json({ error: "Missing or invalid 'text' payload." });
+  }
+  if (text.length > 2000) {
+    return res.status(400).json({ error: "Input text exceeds maximum length of 2000 characters." });
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ error: "Gemini API integration isn't configured on the server." });
+  }
+
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Extract assets from this text: "${text}"`,
+      config: {
+        systemInstruction: `You are an expert asset extractor. 
+Return ONLY a JSON object with an array named 'assets'. No markdown blocks, no explanation.
+Fields required: name, category, quantity (number), and assignedTo (Array of strings).
+Normalize asset names gracefully. Do not include any text outside the JSON structure.`,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            assets: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  category: { type: Type.STRING },
+                  quantity: { type: Type.NUMBER },
+                  assignedTo: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING }
+                  }
+                },
+                required: ["name", "category", "quantity", "assignedTo"]
+              }
+            }
+          },
+          required: ["assets"]
+        }
+      }
+    });
+
+    const rawText = response.text;
+    if (!rawText) throw new Error("No text returned from Gemini");
+
+    let parsed;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch(e) {
+       console.error("Gemini returned invalid json:", rawText);
+       return res.status(500).json({ error: "AI returned invalid format." });
+    }
+
+    res.json(parsed);
+  } catch(e: any) {
+    console.error("Extraction error:", e);
+    // Determine if it's an API Key issue
+    if (e.message?.includes("API key not valid") || e.status === 400 || String(e).includes("API_KEY_INVALID")) {
+      return res.status(500).json({ 
+        error: "AI extraction is currently under maintenance. Please try again later." 
+      });
+    }
+    res.status(500).json({ error: "Internal server error during extraction.", details: String(e) });
+  }
+});
+
+app.get("/api/health", (req, res) => {
     res.json({ 
       status: "ok", 
       timestamp: new Date().toISOString(),

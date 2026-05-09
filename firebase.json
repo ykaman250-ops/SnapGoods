@@ -1,8 +1,29 @@
 {
-  "firestore": {
-    "rules": "firestore.rules",
-    "database": "nv-rpj-db"
+  "hosting": {
+    "site": "snapgoodspro",
+    "public": "dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "function": "api"
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
   },
+  "firestore": [
+    {
+      "rules": "firestore.rules",
+      "database": "snapgoods-prod"
+    }
+  ],
   "functions": {
     "source": "functions",
     "ignore": [

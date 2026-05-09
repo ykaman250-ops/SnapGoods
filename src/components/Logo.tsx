@@ -4,9 +4,10 @@ import { cn } from '../lib/utils';
 interface LogoProps {
   className?: string;
   variant?: 'full' | 'icon';
+  forceLight?: boolean;
 }
 
-export function Logo({ className, variant = 'full' }: LogoProps) {
+export function Logo({ className, variant = 'full', forceLight = false }: LogoProps) {
   // Hexagon geometry
   const R = 20; // circumradius
   const G = 2.5; // gap between hexagons
@@ -26,34 +27,34 @@ export function Logo({ className, variant = 'full' }: LogoProps) {
 
   return (
     <svg 
-      viewBox={variant === 'full' ? "0 0 280 90" : "0 0 80 90"} 
+      viewBox={variant === 'full' ? "0 0 320 90" : "0 0 80 90"} 
       fill="none" 
       xmlns="http://www.w3.org/2000/svg"
       className={cn("w-full h-full", className)}
     >
-      <g stroke="none">
+      <g stroke="none" className="logo-hex-group">
         {/* Top Dark Hexagon */}
         <polygon 
           points={hexPoints} 
-          className="fill-[#2d2d2d] dark:fill-gray-200" 
+          className={cn("fill-current text-[#2d2d2d]", !forceLight && "dark:text-gray-200")} 
           transform={`translate(${C1.x}, ${C1.y})`} 
         />
         
         {/* Left Dark Hexagon */}
         <polygon 
           points={hexPoints} 
-          className="fill-[#2d2d2d] dark:fill-gray-200" 
+          className={cn("fill-current text-[#2d2d2d]", !forceLight && "dark:text-gray-200")} 
           transform={`translate(${C2.x}, ${C2.y})`} 
         />
         
         {/* Bottom Gold Cube */}
-        <g transform={`translate(${C3.x}, ${C3.y})`}>
+        <g transform={`translate(${C3.x}, ${C3.y})`} className="logo-cube-group">
           {/* Top Face */}
-          <polygon points={topFacePoints} fill="#dfc182" transform={`translate(0, ${-gc})`} />
+          <polygon points={topFacePoints} fill="currentColor" className="text-[#dfc182]" transform={`translate(0, ${-gc})`} />
           {/* Left Face */}
-          <polygon points={leftFacePoints} fill="#a38042" transform={`translate(${-gc * 0.866025}, ${gc * 0.5})`} />
+          <polygon points={leftFacePoints} fill="currentColor" className="text-[#a38042]" transform={`translate(${-gc * 0.866025}, ${gc * 0.5})`} />
           {/* Right Face */}
-          <polygon points={rightFacePoints} fill="#826330" transform={`translate(${gc * 0.866025}, ${gc * 0.5})`} />
+          <polygon points={rightFacePoints} fill="currentColor" className="text-[#826330]" transform={`translate(${gc * 0.866025}, ${gc * 0.5})`} />
         </g>
       </g>
       
@@ -64,9 +65,9 @@ export function Logo({ className, variant = 'full' }: LogoProps) {
           fontFamily="'Geist Variable', Inter, sans-serif" 
           fontSize="36" 
           fontWeight="bold" 
-          className="fill-[#2d2d2d] dark:fill-white"
+          className={cn("fill-current text-[#2d2d2d]", !forceLight && "dark:text-white")}
         >
-          Asset<tspan fill="#a38042">Hive</tspan>
+          Snap<tspan className="fill-current text-[#a38042]">Goods</tspan>
         </text>
       )}
     </svg>

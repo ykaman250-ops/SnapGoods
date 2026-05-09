@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { cn } from '../lib/utils';
 import { 
   Search, 
@@ -53,6 +53,7 @@ import { useAuth } from '../lib/auth';
 import { printTable } from '../lib/print';
 import { useDateFormatter } from '../lib/useDateFormatter';
 import { toast } from 'sonner';
+import { useActionManager } from '../lib/actionManager';
 
 const DEPARTMENTS = ['HR', 'Purchase', 'Accounts', 'Mechanical', 'Bottling', 'Power Plant', 'Production', 'Excise'];
 
@@ -67,7 +68,13 @@ export default function Assignments() {
   const [search, setSearch] = useState('');
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [assetSearch, setAssetSearch] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitting, setIsSubmittingState] = useState(false);
+  const isSubmittingRef = useRef(false);
+
+  const setIsSubmitting = (val: boolean) => {
+    isSubmittingRef.current = val;
+    setIsSubmittingState(val);
+  };
   
   // Assign state
   const [isAssignOpen, setIsAssignOpen] = useState(false);
@@ -126,8 +133,11 @@ export default function Assignments() {
     return employee ? employee.employeeCode : 'N/A';
   };
 
+  const actionManager = useActionManager();
+
   const handleAssign = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (isSubmittingRef.current) return;
     if (!selectedAsset) return toast.error('Please select an asset');
     if (assigneeType === 'employee' && !selectedEmployee) return toast.error('Please select an employee');
     if (assigneeType === 'department' && !selectedDepartment) return toast.error('Please select a department');
@@ -137,18 +147,41 @@ export default function Assignments() {
 
     setIsSubmitting(true);
     try {
-      await api.create('assignments', {
-        assetId: selectedAsset,
-        assigneeType,
-        ...(assigneeType === 'employee' ? { employeeId: selectedEmployee } : { department: selectedDepartment }),
-        assignedAt: new Date().toISOString(),
-        status: 'active',
-        remarks: remarks || ''
-      });
+      let assignmentId = '';
+      const asset = assets.find((a: any) => a.id === selectedAsset);
+      const prevAssetStatus = asset ? asset.status : 'available';
 
-      await api.update('assets', selectedAsset, { status: 'assigned' });
+      await actionManager.executeComplex('Asset assigned successfully',
+        async () => {
+          if (!assignmentId) {
+            assignmentId = await api.create('assignments', {
+              assetId: selectedAsset,
+              assigneeType,
+              ...(assigneeType === 'employee' ? { employeeId: selectedEmployee } : { department: selectedDepartment }),
+              assignedAt: new Date().toISOString(),
+              status: 'active',
+              remarks: remarks || ''
+            }) as string;
+          } else {
+            await api.set('assignments', assignmentId, {
+              assetId: selectedAsset,
+              assigneeType,
+              ...(assigneeType === 'employee' ? { employeeId: selectedEmployee } : { department: selectedDepartment }),
+              assignedAt: new Date().toISOString(),
+              status: 'active',
+              remarks: remarks || ''
+            });
+          }
+          await api.update('assets', selectedAsset, { status: 'assigned' });
+        },
+        async () => {
+          if (assignmentId) {
+            await api.delete('assignments', assignmentId);
+          }
+          await api.update('assets', selectedAsset, { status: prevAssetStatus });
+        }
+      );
       
-      toast.success('Asset assigned successfully');
       setIsAssignOpen(false);
       setSelectedAsset('');
       setSelectedEmployee('');
@@ -163,21 +196,35 @@ export default function Assignments() {
   };
 
   const confirmReturn = async () => {
-    if (!returningAssignment) return;
+    if (!returningAssignment || isSubmittingRef.current) return;
     setIsSubmitting(true);
     try {
-      // Update assignment record
-      await api.update('assignments', returningAssignment.id, { 
-        returnedAt: new Date().toISOString(),
-        status: 'returned'
-      });
+      const prevAssignmentStatus = returningAssignment.status;
+      const prevReturnedAt = returningAssignment.returnedAt;
+      const asset = assets.find((a: any) => a.id === returningAssignment.assetId);
+      const prevAssetStatus = asset ? asset.status : 'assigned';
+
+      await actionManager.executeComplex('Asset returned successfully',
+        async () => {
+          await api.update('assignments', returningAssignment.id, { 
+            returnedAt: new Date().toISOString(),
+            status: 'returned'
+          });
+          await api.update('assets', returningAssignment.assetId, { 
+            status: 'available'
+          });
+        },
+        async () => {
+          await api.update('assignments', returningAssignment.id, { 
+            returnedAt: prevReturnedAt || null,
+            status: prevAssignmentStatus
+          });
+          await api.update('assets', returningAssignment.assetId, { 
+            status: prevAssetStatus
+          });
+        }
+      );
       
-      // Update asset status
-      await api.update('assets', returningAssignment.assetId, { 
-        status: 'available'
-      });
-      
-      toast.success('Asset returned successfully');
       setIsReturnOpen(false);
       setReturningAssignment(null);
     } catch (error) {
@@ -188,11 +235,10 @@ export default function Assignments() {
   };
 
   const confirmDeleteHistory = async () => {
-    if (!deletingHistory) return;
+    if (!deletingHistory || isSubmittingRef.current) return;
     setIsSubmitting(true);
     try {
-      await api.delete('assignments', deletingHistory.id);
-      toast.success('Assignment history deleted successfully');
+      await actionManager.delete('assignments', deletingHistory.id, deletingHistory, 'Assignment history deleted successfully');
       setIsDeleteHistoryOpen(false);
       setDeletingHistory(null);
     } catch (error) {
@@ -288,9 +334,7 @@ export default function Assignments() {
                   <label className="text-sm font-medium">Select Asset</label>
                   <Select value={selectedAsset} onValueChange={setSelectedAsset}>
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Choose an available asset">
-                        {selectedAsset ? getAssetName(selectedAsset) : null}
-                      </SelectValue>
+                      <SelectValue placeholder="Choose an available asset" />
                     </SelectTrigger>
                     <SelectContent>
                       <div className="p-2 sticky top-0 bg-popover z-10 border-b">
@@ -335,12 +379,7 @@ export default function Assignments() {
                     <label className="text-sm font-medium">Select Employee</label>
                     <Select value={selectedEmployee} onValueChange={setSelectedEmployee}>
                       <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Choose an employee">
-                          {selectedEmployee ? (() => {
-                            const emp = employees.find(e => e.id === selectedEmployee);
-                            return emp ? `${emp.employeeCode} - ${emp.name} (${emp.designation})` : null;
-                          })() : null}
-                        </SelectValue>
+                        <SelectValue placeholder="Choose an employee" />
                       </SelectTrigger>
                       <SelectContent>
                         <div className="p-2 sticky top-0 bg-popover z-10 border-b">
@@ -352,11 +391,13 @@ export default function Assignments() {
                           />
                         </div>
                         {employees
-                          .filter(e => 
-                            e.name.toLowerCase().includes(employeeSearch.toLowerCase()) || 
+                          .filter(e => {
+                            if (e.dateOfLeaving) return false;
+                            
+                            return e.name.toLowerCase().includes(employeeSearch.toLowerCase()) || 
                             e.employeeCode?.toLowerCase().includes(employeeSearch.toLowerCase()) ||
-                            e.designation?.toLowerCase().includes(employeeSearch.toLowerCase())
-                          )
+                            e.designation?.toLowerCase().includes(employeeSearch.toLowerCase());
+                          })
                           .map(e => (
                           <SelectItem key={e.id} value={e.id}>{e.employeeCode} - {e.name} ({e.designation})</SelectItem>
                         ))}
@@ -409,8 +450,10 @@ export default function Assignments() {
             </p>
           </div>
           <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={() => setIsReturnOpen(false)}>Cancel</Button>
-            <Button className="bg-primary hover:bg-primary/90 text-primary-foreground" onClick={confirmReturn}>Confirm Return</Button>
+            <Button variant="outline" onClick={() => setIsReturnOpen(false)} disabled={isSubmitting}>Cancel</Button>
+            <Button disabled={isSubmitting} className="bg-primary hover:bg-primary/90 text-primary-foreground" onClick={confirmReturn}>
+              {isSubmitting ? 'Returning...' : 'Confirm Return'}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -427,8 +470,10 @@ export default function Assignments() {
             </p>
           </div>
           <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={() => setIsDeleteHistoryOpen(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={confirmDeleteHistory}>Delete History</Button>
+            <Button variant="outline" onClick={() => setIsDeleteHistoryOpen(false)} disabled={isSubmitting}>Cancel</Button>
+            <Button variant="destructive" disabled={isSubmitting} onClick={confirmDeleteHistory}>
+              {isSubmitting ? 'Deleting...' : 'Delete History'}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

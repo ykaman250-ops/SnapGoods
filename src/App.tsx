@@ -1,6 +1,8 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './lib/auth';
+import { UndoRedoProvider } from './contexts/UndoRedoContext';
+import { ActionManagerProvider } from './lib/actionManager';
 import { Toaster } from './components/ui/sonner';
 import { Lock, UserX, LogOut } from 'lucide-react';
 import { Button } from './components/ui/button';
@@ -13,8 +15,11 @@ import Assignments from './pages/Assignments';
 import Admin from './pages/Admin';
 import AssetConfiguration from './pages/AssetConfiguration';
 import AssetPrint from './pages/AssetPrint';
+import Landing from './pages/Landing';
+import Reports from './pages/Reports';
+import Inventory from './pages/Inventory';
 
-function ProtectedRoute({ children, requiredRole }: { children: React.ReactNode, requiredRole?: string }) {
+function ProtectedRoute({ children, requiredRole, forbiddenRoles }: { children: React.ReactNode, requiredRole?: string, forbiddenRoles?: string[] }) {
   const { user, profile, loading, logout } = useAuth();
 
   if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
@@ -46,7 +51,7 @@ function ProtectedRoute({ children, requiredRole }: { children: React.ReactNode,
             <UserX className="w-8 h-8" />
           </div>
           <h2 className="text-2xl font-bold text-foreground mb-2">Account Deactivated</h2>
-          <p className="text-muted-foreground mb-6">This account is no longer active. If you believe this is a mistake, please contact HR or IT support.</p>
+          <p className="text-muted-foreground mb-6">This account is no longer active. If you believe this is a mistake, please contact your administrator or support team.</p>
           <Button onClick={logout} variant="outline" className="w-full">
             <LogOut className="w-4 h-4 mr-2" />
             Sign Out
@@ -56,11 +61,21 @@ function ProtectedRoute({ children, requiredRole }: { children: React.ReactNode,
     );
   }
 
+  if (forbiddenRoles && profile?.role && forbiddenRoles.includes(profile.role)) {
+    return <Navigate to="/dashboard" />;
+  }
+
   if (requiredRole && profile?.role !== requiredRole && profile?.role !== 'admin' && profile?.role !== 'owner' && profile?.role !== 'superadmin') {
     return <Navigate to="/" />;
   }
 
-  return <>{children}</>;
+  return (
+    <UndoRedoProvider>
+      <ActionManagerProvider>
+        {children}
+      </ActionManagerProvider>
+    </UndoRedoProvider>
+  );
 }
 
 function ProtectedLayout() {
@@ -101,28 +116,42 @@ function ThemeProvider({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function RootRedirect() {
+  const { user, profile, loading } = useAuth();
+  if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  if (user && profile) return <Navigate to="/dashboard" />;
+  return <Landing />;
+}
+
 export default function App() {
   return (
     <AuthProvider>
       <ThemeProvider>
         <Router>
           <Routes>
+            <Route path="/" element={<RootRedirect />} />
             <Route path="/login" element={<Login />} />
-            <Route path="/" element={
+            <Route element={
               <ProtectedRoute>
                 <ProtectedLayout />
               </ProtectedRoute>
             }>
-              <Route index element={<Dashboard />} />
-              <Route path="assets" element={<Assets />} />
-              <Route path="employees" element={<Employees />} />
-              <Route path="assignments" element={<Assignments />} />
-              <Route path="asset-config" element={
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/assets" element={<Assets />} />
+              <Route path="/inventory" element={<Inventory />} />
+              <Route path="/employees" element={<Employees />} />
+              <Route path="/assignments" element={<Assignments />} />
+              <Route path="/reports" element={
+                <ProtectedRoute forbiddenRoles={['viewer']}>
+                  <Reports />
+                </ProtectedRoute>
+              } />
+              <Route path="/asset-config" element={
                 <ProtectedRoute requiredRole="admin">
                   <AssetConfiguration />
                 </ProtectedRoute>
               } />
-              <Route path="admin" element={
+              <Route path="/admin" element={
                 <ProtectedRoute requiredRole="admin">
                   <Admin />
                 </ProtectedRoute>

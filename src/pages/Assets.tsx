@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { orderBy, where, limit } from 'firebase/firestore';
 import { cn } from '../lib/utils';
@@ -55,12 +55,14 @@ import {
   TabsList, 
   TabsTrigger 
 } from '../components/ui/tabs';
-import { api } from '../lib/api';
+import { api, generateHumanId } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { QRCodeSVG } from 'qrcode.react';
 import { printTable } from '../lib/print';
 import { useDateFormatter } from '../lib/useDateFormatter';
 import { useCurrencyFormatter } from '../lib/useCurrencyFormatter';
+import { useActionManager } from '../lib/actionManager';
+import { useUndoRedo } from '../contexts/UndoRedoContext';
 import { toast } from 'sonner';
 import { calculateDepreciation } from '../lib/depreciation';
 import { assetService } from '../lib/assetService';
@@ -74,9 +76,13 @@ const DEPARTMENTS = ['IT', 'HR', 'Finance', 'Operations', 'Sales', 'Marketing', 
 
 export default function Assets() {
   const { profile, organization } = useAuth();
+  const actionManager = useActionManager();
+  const { lastActionTime } = useUndoRedo();
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
   const urlAssetId = searchParams.get('id');
+  const initialCategory = searchParams.get('category') || 'all';
+  const initialGroupBy = searchParams.get('groupBy') || 'all';
 
   const formatDate = useDateFormatter();
   const formatCurrency = useCurrencyFormatter();
@@ -87,9 +93,10 @@ export default function Assets() {
   const [categories, setCategories] = useState<AssetCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState(initialCategory);
   const [locationFilter, setLocationFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [groupBy, setGroupBy] = useState<string>(initialGroupBy);
   const [assetCategory, setAssetCategory] = useState('');
   const [assetType, setAssetType] = useState('');
   const [assetLocationId, setAssetLocationId] = useState('');
@@ -150,7 +157,7 @@ export default function Assets() {
       setVendors(venRes as Vendor[] || []);
       setLocations(locRes as Location[] || []);
       
-      const loadedCategories = catRes as AssetCategory[] || [];
+      const loadedCategories = (catRes as AssetCategory[] || []).filter(c => !c.usage || c.usage === 'asset' || c.usage === 'both');
       setCategories(loadedCategories);
       
       // Safety: set default category if not already set
@@ -195,6 +202,12 @@ export default function Assets() {
   }, [profile, organization]);
 
   useEffect(() => {
+    if (lastActionTime) {
+      loadAssets();
+    }
+  }, [lastActionTime]);
+
+  useEffect(() => {
     async function loadUrlAsset() {
       if (urlAssetId && profile) {
         try {
@@ -227,6 +240,7 @@ export default function Assets() {
       a.name?.toLowerCase().includes(searchLower) || 
       a.assetCode?.toLowerCase().includes(searchLower) ||
       a.serialNumber?.toLowerCase().includes(searchLower) ||
+      a.assetTag?.toLowerCase().includes(searchLower) ||
       a.category?.toLowerCase().includes(searchLower) ||
       a.type?.toLowerCase().includes(searchLower) ||
       locName.includes(searchLower)
@@ -240,7 +254,13 @@ export default function Assets() {
 
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [assetToDelete, setAssetToDelete] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitting, setIsSubmittingState] = useState(false);
+  const isSubmittingRef = useRef(false);
+
+  const setIsSubmitting = (val: boolean) => {
+    isSubmittingRef.current = val;
+    setIsSubmittingState(val);
+  };
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
   const [isEditMaintenanceOpen, setIsEditMaintenanceOpen] = useState(false);
@@ -285,7 +305,7 @@ export default function Assets() {
 
   const handleAddMaintenanceLog = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!viewingAsset || !organization) return;
+    if (!viewingAsset || !organization || isSubmittingRef.current) return;
     setIsSubmitting(true);
     try {
       const logData = {
@@ -323,7 +343,7 @@ export default function Assets() {
 
   const handleEditMaintenanceLog = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!maintenanceLogToEdit || !maintenanceLogToEdit.id) return;
+    if (!maintenanceLogToEdit || !maintenanceLogToEdit.id || isSubmittingRef.current) return;
     setIsSubmitting(true);
     try {
       const updatedLog = {
@@ -355,7 +375,7 @@ export default function Assets() {
   };
 
   const handleDeleteMaintenanceLog = async () => {
-    if (!maintenanceLogToDelete) return;
+    if (!maintenanceLogToDelete || isSubmittingRef.current) return;
     setIsSubmitting(true);
     try {
       await api.delete('maintenance_logs', maintenanceLogToDelete);
@@ -376,11 +396,14 @@ export default function Assets() {
   };
 
   const confirmDelete = async () => {
-    if (!assetToDelete) return;
+    if (!assetToDelete || isSubmittingRef.current) return;
     setIsSubmitting(true);
     try {
-      await api.delete('assets', assetToDelete);
-      setAssets(prev => prev.filter(a => a.id !== assetToDelete));
+      const assetData = assets.find(a => a.id === assetToDelete);
+      if (assetData) {
+        await actionManager.delete('assets', assetToDelete, assetData, `Deleted asset ${assetData.name}`);
+        setAssets(prev => prev.filter(a => a.id !== assetToDelete));
+      }
       toast.success('Asset deleted successfully');
       setIsDeleteOpen(false);
       setAssetToDelete(null);
@@ -394,6 +417,8 @@ export default function Assets() {
 
   const handleSave = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (isSubmittingRef.current) return;
+    setIsSubmitting(true);
     const formData = new FormData(e.currentTarget);
     const data: any = Object.fromEntries(formData.entries());
     
@@ -401,10 +426,12 @@ export default function Assets() {
     data.purchaseCost = parseFloat(data.purchaseCost || '0');
     data.usefulLifeYears = parseInt(data.usefulLifeYears || '0');
     data.salvageValue = parseFloat(data.salvageValue || '0');
+    data.quantity = parseInt(data.quantity || '1');
     
     // Validation
     if (data.purchaseCost < 0) return toast.error('Purchase cost must be non-negative');
     if (data.usefulLifeYears <= 0) return toast.error('Useful life must be greater than zero');
+    if (data.quantity <= 0) return toast.error('Quantity must be greater than zero');
     if (data.salvageValue > data.purchaseCost) return toast.error('Salvage value cannot exceed purchase cost');
 
     // Custom Fields Validation
@@ -440,21 +467,40 @@ export default function Assets() {
     setIsSubmitting(true);
     try {
       if (editingAsset && editingAsset.id) {
-        await assetService.updateAsset(editingAsset.id, finalData, profile!.orgId!, editingAsset);
+        await actionManager.executeComplex(
+          `Updated asset ${finalData.name}`,
+          async () => {
+             await assetService.updateAsset(editingAsset.id, finalData, profile!.orgId!, editingAsset);
+          },
+          async () => {
+             const restoredData = { ...editingAsset, ...finalData } as Asset;
+             const revertUpdates: any = {};
+             Object.keys(finalData).forEach(key => {
+               revertUpdates[key] = (editingAsset as any)[key];
+             });
+             await assetService.updateAsset(editingAsset.id, revertUpdates, profile!.orgId!, restoredData);
+          }
+        );
         const updatedDoc = await api.get('assets', editingAsset.id);
         if (updatedDoc) setAssets(prev => prev.map(a => a.id === editingAsset.id ? (updatedDoc as Asset) : a));
         toast.success('Asset updated successfully');
       } else {
-        const newId = await assetService.createAsset({ 
-          ...finalData, 
-          status: 'available',
-          depreciationMethod: assetDepreciationMethod
-        }, profile!.orgId!);
-        
-        if (typeof newId === 'string') {
-          const newDoc = await api.get('assets', newId);
-          if (newDoc) setAssets(prev => [newDoc as Asset, ...prev]);
-        }
+        const newId = generateHumanId('assets');
+        await actionManager.executeComplex(
+          `Created asset ${finalData.name}`,
+          async () => {
+            await assetService.createAsset({ 
+              ...finalData, 
+              status: 'available',
+              depreciationMethod: assetDepreciationMethod
+            }, profile!.orgId!, newId);
+          },
+          async () => {
+            await api.delete('assets', newId);
+          }
+        );
+        const newDoc = await api.get('assets', newId);
+        if (newDoc) setAssets(prev => [newDoc as Asset, ...prev]);
         toast.success('Asset created successfully');
       }
       setIsAddOpen(false);
@@ -468,6 +514,7 @@ export default function Assets() {
 
   const handleAssign = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (isSubmittingRef.current) return;
     if (assigneeType === 'employee' && !selectedEmployee) return toast.error('Please select an employee');
     if (assigneeType === 'department' && !selectedDepartment) return toast.error('Please select a department');
 
@@ -483,20 +530,32 @@ export default function Assets() {
         assignedTo: assigneeType === 'employee' ? selectedEmployee : '' // department is tracked in assignment record
       };
       
-      await assetService.updateAsset(assigningAsset.id, updates, profile!.orgId!, assigningAsset);
-
-      // Create assignment record
-      await api.create('assignments', {
+      const assignmentId = generateHumanId('assignments');
+      const assignmentData = {
         assetId: assigningAsset.id,
         assigneeType,
         ...(assigneeType === 'employee' ? { employeeId: selectedEmployee } : { department: selectedDepartment }),
         assignedAt: new Date().toISOString(),
         status: 'active',
         remarks: remarks || ''
-      });
+      };
+
+      await actionManager.executeComplex(
+        `Assigned asset ${assigningAsset.name}`,
+        async () => {
+          await assetService.updateAsset(assigningAsset.id, updates, profile!.orgId!, assigningAsset);
+          await api.set('assignments', assignmentId, assignmentData);
+        },
+        async () => {
+          const restoredData = { ...assigningAsset, ...updates } as Asset;
+          await assetService.updateAsset(assigningAsset.id, { status: assigningAsset.status, assignedTo: assigningAsset.assignedTo }, profile!.orgId!, restoredData);
+          await api.delete('assignments', assignmentId);
+        }
+      );
 
       const updatedDoc = await api.get('assets', assigningAsset.id);
       if (updatedDoc) setAssets(prev => prev.map(a => a.id === assigningAsset.id ? (updatedDoc as Asset) : a));
+
       toast.success('Asset assigned successfully');
       setIsAssignOpen(false);
       setAssigningAsset(null);
@@ -512,11 +571,20 @@ export default function Assets() {
 
   const handleStatusChange = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!statusAsset?.id) return;
+    if (!statusAsset?.id || isSubmittingRef.current) return;
 
     setIsSubmitting(true);
     try {
-      await assetService.updateAsset(statusAsset.id, { status: newStatus }, profile!.orgId!, statusAsset);
+      await actionManager.executeComplex(
+        `Changed status of ${statusAsset.name}`,
+        async () => {
+          await assetService.updateAsset(statusAsset.id, { status: newStatus }, profile!.orgId!, statusAsset);
+        },
+        async () => {
+          const restoredData = { ...statusAsset, status: newStatus } as Asset;
+          await assetService.updateAsset(statusAsset.id, { status: statusAsset.status }, profile!.orgId!, restoredData);
+        }
+      );
 
       const updatedDoc = await api.get('assets', statusAsset.id);
       if (updatedDoc) setAssets(prev => prev.map(a => a.id === statusAsset.id ? (updatedDoc as Asset) : a));
@@ -574,6 +642,7 @@ export default function Assets() {
 
   const handleBulkAssign = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (isSubmittingRef.current) return;
     if (assigneeType === 'employee' && !selectedEmployee) return toast.error('Please select an employee');
     if (assigneeType === 'department' && !selectedDepartment) return toast.error('Please select a department');
 
@@ -618,7 +687,7 @@ export default function Assets() {
   };
 
   const handleUnassign = async () => {
-    if (!unassigningAsset?.id) return;
+    if (!unassigningAsset?.id || isSubmittingRef.current) return;
 
     setIsSubmitting(true);
     try {
@@ -652,6 +721,7 @@ export default function Assets() {
   };
 
   const handleBulkUnassign = async () => {
+    if (selectedAssets.length === 0 || isSubmittingRef.current) return;
     setIsSubmitting(true);
     try {
       const allAssignments = (await api.list('assignments')) as Assignment[];
@@ -688,6 +758,7 @@ export default function Assets() {
 
   const handleBulkStatusChange = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (isSubmittingRef.current) return;
     const formData = new FormData(e.currentTarget);
     const remarks = formData.get('remarks') as string;
 
@@ -712,6 +783,7 @@ export default function Assets() {
   };
 
   const handleBulkDelete = async () => {
+    if (selectedAssets.length === 0 || isSubmittingRef.current) return;
     setIsSubmitting(true);
     try {
       const unassignedSelected = selectedAssets.filter(id => {
@@ -808,12 +880,13 @@ export default function Assets() {
           if (categories.length > 0) {
             const firstCat = categories[0];
             setAssetCategory(firstCat.name);
-            const firstType = firstCat.assetTypes?.[0]?.name || '';
+            const validTypes = firstCat.assetTypes?.filter(t => !t.usage || t.usage === 'asset' || t.usage === 'both') || [];
+            const firstType = validTypes[0]?.name || '';
             setAssetType(firstType);
             
-            if (firstType && firstCat.assetTypes?.[0]) {
+            if (firstType && validTypes[0]) {
               const initialData: any = {};
-              firstCat.assetTypes[0].customFields?.forEach(f => {
+              validTypes[0].customFields?.forEach(f => {
                 initialData[f.name] = f.defaultValue !== undefined ? f.defaultValue : '';
               });
               setCustomFieldsData(initialData);
@@ -842,12 +915,13 @@ export default function Assets() {
                     setAssetCategory(val);
                     // Reset type when category changes
                     const cat = categories.find(c => c.name === val);
-                    const firstType = cat?.assetTypes?.[0]?.name || '';
+                    const validTypes = cat?.assetTypes?.filter(t => !t.usage || t.usage === 'asset' || t.usage === 'both') || [];
+                    const firstType = validTypes[0]?.name || '';
                     setAssetType(firstType);
                     
-                    if (firstType && cat?.assetTypes?.[0]) {
+                    if (firstType && validTypes[0]) {
                       const initialData: any = {};
-                      cat.assetTypes[0].customFields?.forEach(f => {
+                      validTypes[0].customFields?.forEach(f => {
                         initialData[f.name] = f.defaultValue !== undefined ? f.defaultValue : '';
                       });
                       setCustomFieldsData(initialData);
@@ -864,7 +938,7 @@ export default function Assets() {
                           {loading ? 'Loading categories...' : 'No categories found. Click "Add Category" in Configuration.'}
                         </div>
                       ) : (
-                        categories.map(c => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)
+                        categories.filter(c => !c.usage || c.usage === 'asset' || c.usage === 'both').map(c => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)
                       )}
                     </SelectContent>
                   </Select>
@@ -882,7 +956,8 @@ export default function Assets() {
                   {(() => {
                     const selectedCat = categories.find(c => c.name === assetCategory);
                     const hasLegacyTypes = selectedCat?.types && selectedCat.types.length > 0;
-                    const hasNewTypes = selectedCat?.assetTypes && selectedCat.assetTypes.length > 0;
+                    const validNewTypes = selectedCat?.assetTypes?.filter(t => !t.usage || t.usage === 'asset' || t.usage === 'both') || [];
+                    const hasNewTypes = validNewTypes.length > 0;
                     
                     if (hasNewTypes) {
                       return (
@@ -891,7 +966,7 @@ export default function Assets() {
                           value={assetType} 
                           onValueChange={(val) => {
                             setAssetType(val);
-                            const typeDef = selectedCat?.assetTypes?.find(t => t.name === val);
+                            const typeDef = validNewTypes.find(t => t.name === val);
                             if (typeDef) {
                               const initialData: any = {};
                               typeDef.customFields?.forEach(f => {
@@ -907,7 +982,7 @@ export default function Assets() {
                             <SelectValue placeholder="Select type" />
                           </SelectTrigger>
                           <SelectContent>
-                            {selectedCat?.assetTypes?.map(t => (
+                            {validNewTypes.map(t => (
                               <SelectItem key={t.name} value={t.name}>{t.name}</SelectItem>
                             ))}
                           </SelectContent>
@@ -936,10 +1011,28 @@ export default function Assets() {
                     );
                   })()}
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Serial Number</label>
-                  <Input name="serialNumber" defaultValue={editingAsset?.serialNumber} placeholder="SN12345678" />
-                </div>
+                {(() => {
+                  const selectedCat = categories.find(c => c.name === assetCategory);
+                  const typeDef = selectedCat?.assetTypes?.find(t => t.name === assetType);
+                  const showSerial = !typeDef || typeDef.includeSerialNumber !== false;
+                  return showSerial ? (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Serial Number</label>
+                      <Input name="serialNumber" defaultValue={editingAsset?.serialNumber} placeholder="SN12345678" />
+                    </div>
+                  ) : null;
+                })()}
+                {(() => {
+                  const selectedCat = categories.find(c => c.name === assetCategory);
+                  const typeDef = selectedCat?.assetTypes?.find(t => t.name === assetType);
+                  const showAssetTag = !typeDef || typeDef.includeAssetTag !== false;
+                  return showAssetTag ? (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Asset Tag</label>
+                      <Input name="assetTag" defaultValue={editingAsset?.assetTag} placeholder="TAG-123" />
+                    </div>
+                  ) : null;
+                })()}
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Location</label>
                   <Select name="locationId" value={assetLocationId} onValueChange={(val) => {
@@ -947,9 +1040,7 @@ export default function Assets() {
                     setAssetDepartment(''); // reset department when location changes
                   }}>
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select Location">
-                        {assetLocationId ? locations.find(l => l.id === assetLocationId)?.name : null}
-                      </SelectValue>
+                      <SelectValue placeholder="Select Location" />
                     </SelectTrigger>
                     <SelectContent>
                       {locations.map(l => <SelectItem key={l.id} value={l.id || ''}>{l.name}</SelectItem>)}
@@ -1068,9 +1159,7 @@ export default function Assets() {
                   <label className="text-sm font-medium">Vendor</label>
                   <Select name="vendorId" value={assetVendorId} onValueChange={setAssetVendorId}>
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select Vendor">
-                        {assetVendorId ? vendors.find(v => v.id === assetVendorId)?.name : null}
-                      </SelectValue>
+                      <SelectValue placeholder="Select Vendor" />
                     </SelectTrigger>
                     <SelectContent>
                       {vendors.map(v => <SelectItem key={v.id} value={v.id || ''}>{v.name}</SelectItem>)}
@@ -1201,12 +1290,7 @@ export default function Assets() {
               <label className="text-sm font-medium">Select Employee</label>
               <Select value={selectedEmployee} onValueChange={setSelectedEmployee}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Choose an employee">
-                    {selectedEmployee ? (() => {
-                      const emp = employees.find(e => e.id === selectedEmployee);
-                      return emp ? `${emp.employeeCode || ''} - ${emp.name} (${emp.department || 'No Dept'})` : null;
-                    })() : null}
-                  </SelectValue>
+                  <SelectValue placeholder="Choose an employee" />
                 </SelectTrigger>
                 <SelectContent>
                   <div className="p-2 sticky top-0 bg-popover z-10 border-b">
@@ -1218,11 +1302,12 @@ export default function Assets() {
                     />
                   </div>
                   {employees
-                    .filter(e => 
-                      e.name.toLowerCase().includes(employeeSearch.toLowerCase()) || 
+                    .filter(e => {
+                      if (e.dateOfLeaving) return false;
+                      return e.name.toLowerCase().includes(employeeSearch.toLowerCase()) || 
                       e.employeeCode?.toLowerCase().includes(employeeSearch.toLowerCase()) ||
-                      e.department?.toLowerCase().includes(employeeSearch.toLowerCase())
-                    )
+                      e.department?.toLowerCase().includes(employeeSearch.toLowerCase());
+                    })
                     .map(e => (
                     <SelectItem key={e.id} value={e.id || ''}>{e.employeeCode || ''} - {e.name} ({e.department || 'No Dept'})</SelectItem>
                   ))}
@@ -1259,9 +1344,7 @@ export default function Assets() {
               <label className="text-sm font-medium">New Status</label>
               <Select value={newStatus} onValueChange={setNewStatus}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select status">
-                    {newStatus ? newStatus.charAt(0).toUpperCase() + newStatus.slice(1) : null}
-                  </SelectValue>
+                  <SelectValue placeholder="Select status" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="available">Available</SelectItem>
@@ -1300,12 +1383,7 @@ export default function Assets() {
               <label className="text-sm font-medium">Select Employee</label>
               <Select value={selectedEmployee} onValueChange={setSelectedEmployee}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Choose an employee">
-                    {selectedEmployee ? (() => {
-                      const emp = employees.find(e => e.id === selectedEmployee);
-                      return emp ? `${emp.employeeCode || ''} - ${emp.name} (${emp.department || 'No Dept'})` : null;
-                    })() : null}
-                  </SelectValue>
+                  <SelectValue placeholder="Choose an employee" />
                 </SelectTrigger>
                 <SelectContent>
                   <div className="p-2 sticky top-0 bg-popover z-10 border-b">
@@ -1317,11 +1395,12 @@ export default function Assets() {
                     />
                   </div>
                   {employees
-                    .filter(e => 
-                      e.name.toLowerCase().includes(employeeSearch.toLowerCase()) || 
+                    .filter(e => {
+                      if (e.dateOfLeaving) return false;
+                      return e.name.toLowerCase().includes(employeeSearch.toLowerCase()) || 
                       e.employeeCode?.toLowerCase().includes(employeeSearch.toLowerCase()) ||
-                      e.department?.toLowerCase().includes(employeeSearch.toLowerCase())
-                    )
+                      e.department?.toLowerCase().includes(employeeSearch.toLowerCase());
+                    })
                     .map(e => (
                     <SelectItem key={e.id} value={e.id || ''}>{e.employeeCode || ''} - {e.name} ({e.department || 'No Dept'})</SelectItem>
                   ))}
@@ -1358,9 +1437,7 @@ export default function Assets() {
               <label className="text-sm font-medium">New Status</label>
               <Select value={newStatus} onValueChange={setNewStatus}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select status">
-                    {newStatus ? newStatus.charAt(0).toUpperCase() + newStatus.slice(1) : null}
-                  </SelectValue>
+                  <SelectValue placeholder="Select status" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="available">Available</SelectItem>
@@ -1442,14 +1519,14 @@ export default function Assets() {
               {categories.length === 0 ? (
                 <div className="p-2 text-xs text-muted-foreground text-center">No categories found</div>
               ) : (
-                categories.map(c => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)
+                categories.filter(c => !c.usage || c.usage === 'asset' || c.usage === 'both').map(c => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)
               )}
             </SelectContent>
           </Select>
         </div>
       </div>
 
-      <Tabs defaultValue="all" className="space-y-6">
+      <Tabs value={groupBy} onValueChange={setGroupBy} className="space-y-6">
         <TabsList className="bg-card/80 backdrop-blur-sm flex flex-wrap h-auto">
           <TabsTrigger value="all">All Assets</TabsTrigger>
           <TabsTrigger value="category">By Category</TabsTrigger>
@@ -1462,7 +1539,7 @@ export default function Assets() {
         </TabsContent>
 
         <TabsContent value="category" className="space-y-8">
-          {categories.map(cat => {
+          {categories.filter(c => !c.usage || c.usage === 'asset' || c.usage === 'both').map(cat => {
             const category = cat.name;
             const catAssets = filteredAssets.filter(a => a.category === category);
             if (catAssets.length === 0) return null;
@@ -1562,9 +1639,7 @@ export default function Assets() {
               <label className="text-sm font-medium">Vendor</label>
               <Select value={newMaintenanceLog.vendorId} onValueChange={val => setNewMaintenanceLog(prev => ({...prev, vendorId: val === 'none' ? '' : val}))}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select vendor (optional)">
-                    {newMaintenanceLog.vendorId ? vendors.find(v => v.id === newMaintenanceLog.vendorId)?.name : null}
-                  </SelectValue>
+                  <SelectValue placeholder="Select vendor (optional)" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">None</SelectItem>
@@ -1623,9 +1698,7 @@ export default function Assets() {
                 <label className="text-sm font-medium">Vendor</label>
                 <Select value={maintenanceLogToEdit.vendorId || 'none'} onValueChange={val => setMaintenanceLogToEdit(prev => ({...prev!, vendorId: val === 'none' ? undefined : val}))}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select vendor (optional)">
-                      {maintenanceLogToEdit.vendorId ? vendors.find(v => v.id === maintenanceLogToEdit.vendorId)?.name : null}
-                    </SelectValue>
+                    <SelectValue placeholder="Select vendor (optional)" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">None</SelectItem>
@@ -1696,7 +1769,8 @@ export default function Assets() {
                     ))
                   )}
                   <div><p className="text-sm text-muted-foreground">Status</p><div className="mt-1">{getStatusBadge(viewingAsset.status)}</div></div>
-                  <div><p className="text-sm text-muted-foreground">Serial Number</p><p className="font-medium">{viewingAsset.serialNumber || '-'}</p></div>
+                  {viewingAsset.serialNumber && <div><p className="text-sm text-muted-foreground">Serial Number</p><p className="font-medium">{viewingAsset.serialNumber}</p></div>}
+                  {viewingAsset.assetTag && <div><p className="text-sm text-muted-foreground">Asset Tag</p><p className="font-medium">{viewingAsset.assetTag}</p></div>}
                   <div><p className="text-sm text-muted-foreground">Location</p><p className="font-medium">{locations.find(l => l.id === viewingAsset.locationId)?.name || '-'}</p></div>
                   <div><p className="text-sm text-muted-foreground">Department</p><p className="font-medium">{viewingAsset.department || '-'}</p></div>
                   <div><p className="text-sm text-muted-foreground">Vendor</p><p className="font-medium">{vendors.find(v => v.id === viewingAsset.vendorId)?.name || '-'}</p></div>
@@ -1861,8 +1935,9 @@ export default function Assets() {
                     />
                   </div>
                   <div className="text-center space-y-1">
-                    <p className="font-semibold text-lg">{viewingAsset.name}</p>
-                    <p className="text-muted-foreground font-mono">{viewingAsset.assetCode || viewingAsset.serialNumber || viewingAsset.id}</p>
+                    <p className="font-semibold text-lg">{organization?.name}</p>
+                    {viewingAsset.assetCode && <p className="text-muted-foreground font-mono">{viewingAsset.assetCode}</p>}
+                    {viewingAsset.assetTag && <p className="text-muted-foreground font-mono text-sm">{viewingAsset.assetTag}</p>}
                   </div>
                   <Button onClick={() => window.open(`/print-labels?ids=${viewingAsset.id}`, '_blank')}>
                     <Printer className="w-4 h-4 mr-2" />

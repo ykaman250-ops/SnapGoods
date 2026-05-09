@@ -152,18 +152,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         // Required for backwards compatibility / local testing if user is new
         if (currentUser.email === 'adminrajpura@nvgroup.co.in' || currentUser.email === 'ykaman250@gmail.com' || currentUser.email === 'amammehra121@gmail.com' || currentUser.email === 'nvrajpura@nvgroup.co.in') {
-           const newProfile: UserProfile = {
+          // Check for existing organization
+          let orgId = null;
+          const orgsSnap = await getDocs(query(collection(db, 'organizations'), limit(1)));
+          if (!orgsSnap.empty) {
+            const firstOrg = orgsSnap.docs[0];
+            orgId = firstOrg.id;
+            setOrganization({ id: orgId, ...firstOrg.data() } as Organization);
+          } else {
+            orgId = generateHumanId('organizations');
+            const newOrgRef = doc(db, 'organizations', orgId);
+            await setDoc(newOrgRef, {
+              name: 'Main Organization',
+              currency: 'INR',
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            });
+            setOrganization({ id: orgId, name: 'Main Organization', currency: 'INR' } as Organization);
+          }
+
+          const newProfile: UserProfile = {
             uid: currentUser.uid,
             email: currentUser.email || '',
             role: 'superadmin',
             name: currentUser.displayName || 'Super Admin',
             status: 'active',
+            orgId: orgId
           };
           setProfile(newProfile);
           await setDoc(docRef, newProfile);
-          setApiOrgId(null);
+          setApiOrgId(orgId);
         } else {
-           console.error("User authenticated but no profile found in database.");
+          console.error("User authenticated but no profile found in database.");
            await signOut(auth);
            setUser(null);
            setProfile(null);

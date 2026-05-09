@@ -12,33 +12,33 @@ export default defineConfig(({mode}) => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon-192.png', 'icon-512.png', 'icon.svg'],
+        includeAssets: ['icon-192-v4.png', 'icon-512-v4.png', 'icon.svg'],
         manifest: {
-          name: 'AssetHive Asset Manager',
-          short_name: 'AssetHive',
-          description: 'IT Asset Management System',
+          name: 'SnapGoods',
+          short_name: 'SnapGoods',
+          description: 'assets manager',
           display: 'standalone',
           start_url: '/',
           theme_color: '#ffffff',
           background_color: '#ffffff',
           icons: [
             {
-              src: '/icon-192.png',
+              src: '/icon-192-v4.png',
               sizes: '192x192',
               type: 'image/png',
-              purpose: 'any maskable'
+              purpose: 'any'
             },
             {
-              src: '/icon-512.png',
+              src: '/icon-512-v4.png',
               sizes: '512x512',
               type: 'image/png',
-              purpose: 'any maskable'
+              purpose: 'any'
             },
             {
               src: '/icon.svg',
               sizes: 'any',
               type: 'image/svg+xml',
-              purpose: 'any maskable'
+              purpose: 'any'
             }
           ]
         },

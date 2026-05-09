@@ -41,7 +41,9 @@
         "category": { "type": "string", "enum": ["IT", "Vehicle", "Machinery", "Tool", "Facility"] },
         "type": { "type": "string" },
         "status": { "type": "string", "enum": ["available", "assigned", "repair", "retired"] },
+        "quantity": { "type": "number", "description": "For bulk items" },
         "serialNumber": { "type": "string" },
+        "assetTag": { "type": "string" },
         "purchaseDate": { "type": "string", "format": "date" },
         "purchaseCost": { "type": "number" },
         "vendorId": { "type": "string" },
@@ -75,6 +77,13 @@
       "properties": {
         "orgId": { "type": "string" },
         "name": { "type": "string" },
+        "address": { "type": "string" },
+        "city": { "type": "string" },
+        "district": { "type": "string" },
+        "state": { "type": "string" },
+        "country": { "type": "string" },
+        "pinCode": { "type": "string" },
+        "departments": { "type": "array", "items": { "type": "string" } },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["orgId", "name"]
@@ -86,6 +95,14 @@
       "properties": {
         "orgId": { "type": "string" },
         "name": { "type": "string" },
+        "vendorCode": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "emailAddress": { "type": "string" },
+        "address": { "type": "string" },
+        "bankName": { "type": "string" },
+        "accountName": { "type": "string" },
+        "accountNumber": { "type": "string" },
+        "ifscCode": { "type": "string" },
         "contactInfo": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
@@ -179,6 +196,55 @@
         "details": { "type": "object" }
       },
       "required": ["action", "entityType", "performedBy", "timestamp"]
+    },
+    "CustomReport": {
+      "title": "CustomReport",
+      "description": "User created custom reports.",
+      "type": "object",
+      "properties": {
+        "orgId": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "columns": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["orgId", "name", "columns"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "Bulk/consumable inventory items.",
+      "type": "object",
+      "properties": {
+        "orgId": { "type": "string" },
+        "name": { "type": "string" },
+        "itemCode": { "type": "string" },
+        "category": { "type": "string" },
+        "locationId": { "type": "string" },
+        "quantity": { "type": "number" },
+        "lowStockThreshold": { "type": "number" },
+        "purchaseCost": { "type": "number" },
+        "vendorId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orgId", "name", "itemCode", "category", "locationId", "quantity"]
+    },
+    "InventoryTransaction": {
+      "title": "InventoryTransaction",
+      "description": "Log of inventory changes (add, consume, move).",
+      "type": "object",
+      "properties": {
+        "orgId": { "type": "string" },
+        "itemId": { "type": "string" },
+        "action": { "type": "string", "enum": ["add", "consume", "audit", "move"] },
+        "quantity": { "type": "number" },
+        "previousQuantity": { "type": "number" },
+        "newQuantity": { "type": "number" },
+        "locationId": { "type": "string" },
+        "notes": { "type": "string" },
+        "userId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orgId", "itemId", "action", "quantity", "previousQuantity", "newQuantity", "userId", "timestamp"]
     }
   },
   "firestore": {
@@ -191,6 +257,9 @@
     "/employees/{employeeId}": { "schema": "Employee", "description": "Employee records" },
     "/asset_history/{logId}": { "schema": "AssetHistory", "description": "Asset events" },
     "/maintenance_logs/{logId}": { "schema": "MaintenanceLog", "description": "Maintenance records" },
-    "/audit_logs/{logId}": { "schema": "AuditLog", "description": "Audit trail" }
+    "/audit_logs/{logId}": { "schema": "AuditLog", "description": "Audit trail" },
+    "/custom_reports/{reportId}": { "schema": "CustomReport", "description": "Custom user reports" },
+    "/inventory_items/{itemId}": { "schema": "InventoryItem", "description": "Bulk/consumable inventory items" },
+    "/inventory_transactions/{txId}": { "schema": "InventoryTransaction", "description": "Inventory movement log" }
   }
 }

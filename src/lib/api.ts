@@ -18,6 +18,8 @@ import {
   startAfter,
   increment,
   getCountFromServer,
+  getAggregateFromServer,
+  sum,
   DocumentData,
   QueryDocumentSnapshot,
   QueryConstraint
@@ -330,6 +332,28 @@ export const api = {
       return { totalAssets: 0, totalAssetsAssigned: 0, totalAssetsAvailable: 0, totalAssetsMaintenance: 0, totalAssetsRepair: 0, totalAssetsDamaged: 0, totalEmployees: 0,  totalAssignments: 0 };
     }
   },
+  
+  async getInventoryStats() {
+    try {
+      if (!currentOrgId) return { totalStock: 0, lowStockItems: 0 };
+      
+      const q = query(collection(db, 'inventory_items'), where('orgId', '==', currentOrgId));
+      const aggregateSnapshot = await getAggregateFromServer(q, {
+        totalStock: sum('quantity')
+      });
+      
+      const lowStockQ = query(collection(db, 'inventory_items'), where('orgId', '==', currentOrgId), where('quantity', '<=', 10));
+      const lowStockCount = await getCountFromServer(lowStockQ);
+
+      return {
+        totalStock: aggregateSnapshot.data().totalStock,
+        lowStockItems: lowStockCount.data().count
+      };
+    } catch (error) {
+      console.error('Failed to get inventory stats:', error);
+      return { totalStock: 0, lowStockItems: 0 };
+    }
+  },
 
   async create(path: string, data: any) {
     try {
@@ -372,7 +396,8 @@ export const api = {
       const docRef = doc(db, path, id);
       const batch = writeBatch(db);
       
-      const finalData = { ...data, createdAt: data.createdAt || serverTimestamp(), updatedAt: serverTimestamp() };
+      const { id: _id, ...dataWithoutId } = data;
+      const finalData = { ...dataWithoutId, createdAt: data.createdAt || serverTimestamp(), updatedAt: serverTimestamp() };
       if (currentOrgId && !['users', 'organizations'].includes(path)) {
         finalData.orgId = currentOrgId;
       }
@@ -405,8 +430,9 @@ export const api = {
       const batch = writeBatch(db);
       const docRef = doc(db, path, id);
       
+      const { id: _id, ...dataWithoutId } = data;
       batch.set(docRef, {
-        ...data,
+        ...dataWithoutId,
         updatedAt: serverTimestamp()
       }, { merge: true });
       
@@ -436,8 +462,9 @@ export const api = {
       const batch = writeBatch(db);
       const docRef = doc(db, path, id);
       
+      const { id: _id, ...dataWithoutId } = data;
       batch.update(docRef, {
-        ...data,
+        ...dataWithoutId,
         updatedAt: serverTimestamp()
       });
       

@@ -10,20 +10,28 @@ import {
   X,
   ShieldCheck,
   ArrowLeftRight,
-  Database
+  Database,
+  BarChart3,
+  Package,
+  Undo2,
+  Redo2
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { Button } from './ui/button';
 import { cn } from '../lib/utils';
 import { Logo } from './Logo';
 import { UserSettings } from './UserSettings';
+import { useUndoRedo } from '../contexts/UndoRedoContext';
+
 import { NotificationsDropdown } from './NotificationsDropdown';
 
 const navigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Assets', href: '/assets', icon: Laptop },
+  { name: 'Inventory', href: '/inventory', icon: Package },
   { name: 'Employees', href: '/employees', icon: Users },
   { name: 'Assignments', href: '/assignments', icon: ArrowLeftRight },
+  { name: 'Reports', href: '/reports', icon: BarChart3 },
 ];
 
 const adminNavigation = [
@@ -36,6 +44,7 @@ export default function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
+  const { undo, redo, canUndo, canRedo } = useUndoRedo();
 
   const handleLogout = async () => {
     await logout();
@@ -75,7 +84,7 @@ export default function Layout() {
           </div>
 
           <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-            {navigation.map((item) => {
+            {navigation.filter(item => !(item.name === 'Reports' && profile?.role === 'viewer')).map((item) => {
               const Icon = item.icon;
               const isActive = location.pathname === item.href;
               return (
@@ -161,7 +170,7 @@ export default function Layout() {
             
             <div className="hidden md:flex flex-col">
               <h2 className="text-sm font-semibold text-foreground/80 capitalize">
-                {location.pathname === '/' ? 'Dashboard' : location.pathname.split('/')[1] || 'Welcome'}
+                {location.pathname === '/dashboard' ? 'Dashboard' : location.pathname.split('/')[1] || 'Welcome'}
               </h2>
               <p className="text-xs text-muted-foreground font-medium">
                 {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
@@ -172,6 +181,28 @@ export default function Layout() {
           <div className="flex-1" />
           
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-1 border-r border-border pr-4 mr-0">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={undo}
+                disabled={!canUndo}
+                title="Undo (Ctrl+Z)"
+                className={cn("h-9 w-9", !canUndo && "opacity-50 cursor-not-allowed")}
+              >
+                <Undo2 className="w-4 h-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={redo}
+                disabled={!canRedo}
+                title="Redo (Ctrl+Y)"
+                className={cn("h-9 w-9", !canRedo && "opacity-50 cursor-not-allowed")}
+              >
+                <Redo2 className="w-4 h-4" />
+              </Button>
+            </div>
             <NotificationsDropdown />
             <div className="hidden md:block text-right">
               <p className="text-sm font-medium text-foreground">{profile?.name}</p>

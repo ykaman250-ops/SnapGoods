@@ -1,10 +1,10 @@
 {
-  "projectId": "nv-it-assets-rpj",
-  "appId": "1:339240163777:web:3a4c666bc4b9cad79cf740",
-  "apiKey": "AIzaSyAodSqj36JJt2d46I52wAJALWkittrVbQo",
-  "authDomain": "nv-it-assets-rpj.firebaseapp.com",
-  "firestoreDatabaseId": "nv-rpj-db",
-  "storageBucket": "nv-it-assets-rpj.firebasestorage.app",
-  "messagingSenderId": "339240163777",
-  "measurementId": "G-M0YTX6JRLP"
+  "apiKey": "AIzaSyB-APGTCyck86AWxg2AHV9HHK2PsejFK7o",
+  "authDomain": "snapgoodspro.firebaseapp.com",
+  "projectId": "snapgoodspro",
+  "storageBucket": "snapgoodspro.firebasestorage.app",
+  "messagingSenderId": "702360678573",
+  "appId": "1:702360678573:web:0caf96405dfad0abb31624",
+  "measurementId": "G-9PCZ793E1W",
+  "firestoreDatabaseId": "snapgoods-prod"
 }

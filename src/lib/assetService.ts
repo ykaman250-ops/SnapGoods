@@ -21,8 +21,8 @@ import { Asset, AssetHistory } from './types';
 import { generateHumanId } from './api';
 
 export const assetService = {
-  async createAsset(assetData: Omit<Asset, 'id' | 'createdAt' | 'updatedAt' | 'orgId'>, orgId: string) {
-    const assetId = generateHumanId('assets');
+  async createAsset(assetData: Omit<Asset, 'id' | 'createdAt' | 'updatedAt' | 'orgId'>, orgId: string, customId?: string) {
+    const assetId = customId || generateHumanId('assets');
     const assetRef = doc(db, 'assets', assetId);
     const timestamp = serverTimestamp();
     

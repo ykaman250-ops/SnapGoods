@@ -314,7 +314,7 @@ export default function Admin() {
           return ws;
         };
 
-        const reportTitle = `IT Asset Management Report`;
+        const reportTitle = `Asset Management Report`;
         const generatedOn = `Generated on: ${new Date().toLocaleDateString()}`;
 
         if (exportType === 'all' || exportType === 'assets') {
@@ -1011,7 +1011,7 @@ export default function Admin() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="admin">Admin</SelectItem>
-                          <SelectItem value="user">IT Staff</SelectItem>
+                          <SelectItem value="user">Staff</SelectItem>
                           <SelectItem value="viewer">Viewer</SelectItem>
                         </SelectContent>
                       </Select>
