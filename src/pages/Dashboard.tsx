@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { orderBy, limit } from 'firebase/firestore';
+import { orderBy, limit, where } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
 import { calculateDepreciation } from '../lib/depreciation';
@@ -112,22 +112,23 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    if (!profile || !organization) return;
+    if (!profile?.activeOrgId) return;
     
     // We use a caching/memory aggregation strategy to prevent O(n) read costs from missing indexes
     // Fetch all active assets and employees once and aggregate
     const fetchData = async () => {
       try {
         setLoading(true);
+        const orgIdConstraint = where('orgId', '==', profile.activeOrgId);
         const [assets, employees, locations, history, categories, inventoryTxs, invStats, inventory] = await Promise.all([
-          api.list('assets'),
-          api.list('employees'),
-          api.list('locations'),
-          api.list('asset_history'),
-          api.list('asset_categories'),
-          api.list('inventory_transactions', [orderBy('timestamp', 'desc'), limit(10)]),
+          api.list('assets', [orgIdConstraint]),
+          api.list('employees', [orgIdConstraint]),
+          api.list('locations', [orgIdConstraint]),
+          api.list('asset_history', [orgIdConstraint]),
+          api.list('asset_categories', [orgIdConstraint]),
+          api.list('inventory_transactions', [orgIdConstraint, orderBy('timestamp', 'desc'), limit(10)]),
           api.getInventoryStats(),
-          api.list('inventory_items')
+          api.list('inventory_items', [orgIdConstraint])
         ]);
         
         setAllAssets(assets);
@@ -377,7 +378,7 @@ export default function Dashboard() {
     };
 
     fetchData();
-  }, [profile?.uid, organization?.id]);
+  }, [profile?.activeOrgId]);
 
   const [statusBreakdown, setStatusBreakdown] = useState<any[]>([]);
 
