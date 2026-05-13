@@ -19,6 +19,7 @@ export interface UserProfile {
   status: 'active' | 'inactive' | 'frozen';
   activeOrgId?: string;
   orgRoles: Record<string, string>;
+  role?: string; // current active role
   preferences?: UserPreferences;
 }
 
@@ -114,14 +115,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (userData) {
-        setProfile(userData);
-        
         let targetOrgId = userData.activeOrgId;
         // Fallback to first org role if activeOrgId is not set
         if (!targetOrgId && userData.orgRoles && Object.keys(userData.orgRoles).length > 0) {
             targetOrgId = Object.keys(userData.orgRoles)[0];
-            await updateProfileObj({ activeOrgId: targetOrgId });
+            // Don't await updateProfileObj here to avoid recursive state issues in this effect,
+            // we will update it below explicitly without causing issues
+            userData.activeOrgId = targetOrgId;
+            updateDoc(docRef, { activeOrgId: targetOrgId }).catch(console.error);
         }
+
+        // Set the active role
+        if (targetOrgId && userData.orgRoles) {
+          userData.role = userData.orgRoles[targetOrgId] || 'viewer';
+        } else {
+          userData.role = 'viewer';
+        }
+
+        setProfile(userData);
 
         if (targetOrgId) {
           setApiOrgId(targetOrgId);

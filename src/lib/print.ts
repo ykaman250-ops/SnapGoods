@@ -1,4 +1,4 @@
-export function printTable(title: string, columns: string[], data: string[][]) {
+export function printTable(title: string, columns: string[], data: string[][], options?: { landscape?: boolean }) {
   const printWindow = window.open('', '_blank');
   if (!printWindow) {
     alert('Please allow popups to print.');
@@ -46,6 +46,7 @@ export function printTable(title: string, columns: string[], data: string[][]) {
             }
             @page {
               margin: 1cm;
+              ${options?.landscape ? 'size: landscape;' : ''}
             }
           }
         </style>

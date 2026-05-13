@@ -18,21 +18,33 @@ import {
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
   data: TData[]
+  renderBulkActions?: (selectedRows: TData[]) => React.ReactNode
 }
 
 export function DataTable<TData, TValue>({
   columns,
   data,
+  renderBulkActions,
 }: DataTableProps<TData, TValue>) {
+  const [rowSelection, setRowSelection] = React.useState({})
+
   const table = useReactTable({
     data,
     columns,
     getCoreRowModel: getCoreRowModel(),
+    onRowSelectionChange: setRowSelection,
+    state: {
+      rowSelection,
+    },
   })
 
+  // Get original data from selected rows
+  const selectedRows = table.getSelectedRowModel().rows.map(row => row.original)
+
   return (
-    <div className="rounded-md border border-zinc-200/50 dark:border-zinc-800/50 overflow-hidden bg-white dark:bg-zinc-950 shadow-sm">
-      <Table>
+    <>
+      <div className="rounded-md border border-zinc-200/50 dark:border-zinc-800/50 overflow-hidden bg-white dark:bg-zinc-950 shadow-sm relative">
+        <Table>
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id} className="border-zinc-100 dark:border-zinc-800">
@@ -75,5 +87,7 @@ export function DataTable<TData, TValue>({
         </TableBody>
       </Table>
     </div>
+    {renderBulkActions && renderBulkActions(selectedRows)}
+    </>
   )
 }

@@ -185,26 +185,6 @@ export default function Layout() {
           <div className="flex items-center gap-4">
             <OrgSwitcher />
             <div className="flex items-center gap-1 border-r border-border pr-4 mr-0">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={undo}
-                disabled={!canUndo}
-                title="Undo (Ctrl+Z)"
-                className={cn("h-9 w-9", !canUndo && "opacity-50 cursor-not-allowed")}
-              >
-                <Undo2 className="w-4 h-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={redo}
-                disabled={!canRedo}
-                title="Redo (Ctrl+Y)"
-                className={cn("h-9 w-9", !canRedo && "opacity-50 cursor-not-allowed")}
-              >
-                <Redo2 className="w-4 h-4" />
-              </Button>
             </div>
             <NotificationsDropdown />
             <div className="hidden md:block text-right">

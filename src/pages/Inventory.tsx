@@ -111,6 +111,7 @@ export default function Inventory() {
       quantity: parseInt(formData.get('quantity') as string) || 0,
       lowStockThreshold: parseInt(formData.get('lowStockThreshold') as string) || 0,
       purchaseCost: parseFloat(formData.get('purchaseCost') as string) || 0,
+      remarks: formData.get('remarks') as string,
     };
 
     const selectedCat = categories.find(c => c.name === itemCategory);
@@ -644,6 +645,10 @@ export default function Inventory() {
                 <label className="text-sm font-medium">Unit Cost (Optional)</label>
                 <Input name="purchaseCost" type="number" min="0" step="0.01" defaultValue={editingItem?.purchaseCost} />
               </div>
+              <div className="space-y-2 col-span-2">
+                <label className="text-sm font-medium">Remarks</label>
+                <Input name="remarks" defaultValue={editingItem?.remarks} placeholder="Any additional notes..." />
+              </div>
             </div>
 
             {(() => {
@@ -841,6 +846,7 @@ export default function Inventory() {
                   <div><p className="text-sm text-muted-foreground">Quantity</p><p className="font-medium">{viewingItem.quantity || 0}</p></div>
                   <div><p className="text-sm text-muted-foreground">Location</p><p className="font-medium">{locations.find(l => l.id === viewingItem.locationId)?.name || '-'}</p></div>
                   <div><p className="text-sm text-muted-foreground">Unit Cost</p><p className="font-medium">{viewingItem.purchaseCost ? formatCurrency(viewingItem.purchaseCost) : '-'}</p></div>
+                  <div className="col-span-2"><p className="text-sm text-muted-foreground">Remarks</p><p className="font-medium">{viewingItem.remarks || '-'}</p></div>
                 </div>
               </TabsContent>
 

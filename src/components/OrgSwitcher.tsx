@@ -19,7 +19,7 @@ export function OrgSwitcher() {
           } else {
             const orgData = await api.get('organizations', orgId);
             if (orgData) {
-              names[orgId] = orgData.name;
+              names[orgId] = (orgData as Organization).name;
             } else {
               names[orgId] = orgId; // fallback to ID
             }

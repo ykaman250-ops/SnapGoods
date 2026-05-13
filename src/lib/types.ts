@@ -116,6 +116,7 @@ export interface InventoryItem {
   lowStockThreshold?: number;
   purchaseCost?: number;
   vendorId?: string;
+  remarks?: string;
   customData?: Record<string, any>;
   createdAt: string;
   updatedAt: string;

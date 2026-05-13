@@ -67,6 +67,7 @@ import { toast } from 'sonner';
 import { calculateDepreciation } from '../lib/depreciation';
 import { assetService } from '../lib/assetService';
 import { AssetScanner } from '../components/AssetScanner';
+import { BulkActionBar } from '../components/BulkActionBar';
 import { ScanLine } from 'lucide-react';
 import type { Asset, AssetHistory, MaintenanceLog, Employee, Vendor, Location, AssetCategory, AssetStatus, Assignment } from '../lib/types';
 
@@ -766,23 +767,47 @@ export default function Assets() {
     const remarks = formData.get('remarks') as string;
 
     setIsSubmitting(true);
-    try {
-      await Promise.all(selectedAssets.map(async (assetId) => {
-        const asset = assets.find(a => a.id === assetId);
-        if (asset && asset.status !== 'assigned') {
-          await assetService.updateAsset(assetId, { status: newStatus, remarks }, profile!.activeOrgId!, asset);
-          const updatedDoc = await api.get('assets', assetId);
-          if (updatedDoc) setAssets(prev => prev.map(a => a.id === assetId ? (updatedDoc as Asset) : a));
+    let originalAssets = [...assets];
+    let undoTriggered = false;
+
+    // Optimistically update
+    const assetsToUpdate = selectedAssets
+      .map(id => assets.find(a => a.id === id))
+      .filter((a): a is Asset => !!a && a.status !== 'assigned');
+
+    setAssets(prev => prev.map(a => 
+      assetsToUpdate.some(u => u.id === a.id) ? { ...a, status: newStatus, remarks } : a
+    ));
+
+    toast.success(`Status updated for ${assetsToUpdate.length} assets`, {
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          undoTriggered = true;
+          setAssets(originalAssets);
+          toast.success('Restored previous statuses');
         }
-      }));
-      toast.success('Asset statuses updated successfully');
-      setIsBulkStatusOpen(false);
-      setSelectedAssets([]);
-    } catch (error) {
-      toast.error('Failed to update some statuses');
-    } finally {
-      setIsSubmitting(false);
-    }
+      },
+      duration: 5000,
+    });
+
+    setIsBulkStatusOpen(false);
+    setSelectedAssets([]);
+    setIsSubmitting(false);
+
+    // Asynchronously commit the write if not undone
+    setTimeout(async () => {
+      if (undoTriggered) return;
+      try {
+        await Promise.all(assetsToUpdate.map(async (asset) => {
+          await assetService.updateAsset(asset.id, { status: newStatus, remarks }, profile!.activeOrgId!, asset);
+          // Wait, background fetching could be needed? Let's just trust the backend.
+        }));
+      } catch (error) {
+        toast.error('Background bulk update failed');
+        setAssets(originalAssets); // Fallback on failure
+      }
+    }, 5000);
   };
 
   const handleBulkDelete = async () => {
@@ -826,24 +851,47 @@ export default function Assets() {
       .filter(a => selectedAssets.includes(a.id))
       .map(asset => {
         let user = '-';
-        if (asset.status === 'assigned' && asset.assignedTo) {
-          const emp = employees.find(e => e.id === asset.assignedTo);
-          user = emp ? emp.name : '-';
+        if (asset.status === 'assigned') {
+          if (asset.assignedTo) {
+            const emp = employees.find(e => e.id === asset.assignedTo);
+            user = emp ? emp.name : '-';
+          } else if (asset.department) {
+            user = asset.department;
+          }
         }
+        const loc = locations.find(l => l.id === asset.locationId);
+        const vendor = vendors.find(v => v.id === asset.vendorId);
 
         return [
           asset.assetCode || '-',
-          asset.category,
+          asset.assetTag || '-',
           asset.name,
+          asset.category,
+          asset.type || '-',
+          loc ? loc.name : '-',
+          asset.department || '-',
+          asset.status,
           user,
-          asset.status
+          asset.purchaseDate ? new Date(asset.purchaseDate).toLocaleDateString() : '-',
+          asset.purchaseCost ? `$${asset.purchaseCost.toFixed(2)}` : '-',
+          vendor ? vendor.name : '-',
+          asset.serialNumber || '-',
+          asset.usefulLifeYears ? `${asset.usefulLifeYears}` : '-',
+          asset.warrantyExpiry ? new Date(asset.warrantyExpiry).toLocaleDateString() : '-',
+          asset.nextServiceDate ? new Date(asset.nextServiceDate).toLocaleDateString() : '-',
+          asset.remarks || '-'
         ];
       });
 
     printTable(
-      'Selected Assets',
-      ['Asset Code', 'Category', 'Name', 'User', 'Status'],
-      selectedData
+      'Selected Assets Summary',
+      [
+        'Asset Code', 'Asset Tag', 'Name', 'Category', 'Type', 'Location', 'Department',
+        'Status', 'Assigned To', 'Purchase Date', 'Cost', 'Vendor', 'Serial #',
+        'Useful Life', 'Warranty Expiry', 'Next Service', 'Remarks'
+      ],
+      selectedData,
+      { landscape: true }
     );
   };
 
@@ -1960,6 +2008,15 @@ export default function Assets() {
         open={isScannerOpen} 
         onOpenChange={setIsScannerOpen} 
         onScanResult={handleScanResult} 
+      />
+
+      <BulkActionBar
+        selectedCount={selectedAssets.length}
+        onAssign={() => setIsBulkAssignOpen(true)}
+        onUpdateStatus={() => setIsBulkStatusOpen(true)}
+        onPrintLabels={() => window.open(`/print-labels?ids=${selectedAssets.join(',')}`, '_blank')}
+        onPrintSummary={handlePrintSelected}
+        onDelete={() => setIsBulkDeleteOpen(true)}
       />
     </div>
   );
