@@ -3,8 +3,6 @@ import * as logger from "firebase-functions/logger";
 // @ts-ignore
 import { onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { onDocumentWritten } from "firebase-functions/v2/firestore";
-import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 import express from 'express';
@@ -229,7 +227,7 @@ app.delete("/api/admin/users/:uid", verifyAdmin, async (req, res) => {
 // Export the express app as a Firebase HTTP variable named 'api'
 export const api = onRequest({ cors: true, invoker: 'public' }, app);
 
-export const dailyAssetChecks = onSchedule({ schedule: "every day 00:00", timeoutSeconds: 300, memory: '256MiB' }, async (event) => {
+export const dailyAssetChecks = onSchedule({ schedule: "every day 00:00", timeoutSeconds: 300, memory: '256MiB' }, async (event: any) => {
   const db = getFirestore(admin.app(), databaseId);
   const now = new Date();
   
@@ -338,53 +336,5 @@ export const dailyAssetChecks = onSchedule({ schedule: "every day 00:00", timeou
   }
 });
 
-export const aggregateAssetStats = onDocumentWritten({
-    document: 'assets/{assetId}',
-    database: databaseId
-  }, async (event) => {
-    // 1. Determine operation type & fetch orgId
-    const isCreate = !event.data?.before.exists;
-    const isDelete = !event.data?.after.exists;
-    const beforeData = event.data?.before.data();
-    const afterData = event.data?.after.data();
-    
-    const isStatusChange = event.data?.before.exists && event.data?.after.exists && 
-                           (beforeData?.status !== afterData?.status);
 
-    const assetData = event.data?.after.exists ? afterData : beforeData;
-    if (!assetData?.orgId) return null; // Defensive check for bad data
-    
-    // Use getFirestore database
-    const db = getFirestore(admin.app(), databaseId);
-    const orgStatsRef = db.collection('organizations').doc(assetData.orgId).collection('stats').doc('assets');
-
-    // 2. Perform Atomic Increment/Decrement securely using transaction
-    return db.runTransaction(async (transaction) => {
-      const statsDoc = await transaction.get(orgStatsRef);
-      // Initialize if missing
-      if (!statsDoc.exists) {
-         transaction.set(orgStatsRef, { totalAssets: 0 });
-      }
-      
-      let increments: Record<string, FieldValue> = {};
-
-      if (isCreate) {
-        increments['totalAssets'] = FieldValue.increment(1);
-        increments[`status_${assetData.status}`] = FieldValue.increment(1);
-      } else if (isDelete) {
-        increments['totalAssets'] = FieldValue.increment(-1);
-        increments[`status_${assetData.status}`] = FieldValue.increment(-1);
-      } else if (isStatusChange) {
-        const oldStatus = beforeData?.status;
-        const newStatus = afterData?.status;
-        if (oldStatus) increments[`status_${oldStatus}`] = FieldValue.increment(-1);
-        if (newStatus) increments[`status_${newStatus}`] = FieldValue.increment(1);
-      }
-
-      // Merge new stats into the organization doc
-      if (Object.keys(increments).length > 0) {
-        transaction.set(orgStatsRef, increments, { merge: true });
-      }
-    });
-});
 

@@ -139,8 +139,12 @@ export interface InventoryTransaction {
 export interface Organization {
   id?: string;
   name: string;
-  ownerId: string;
+  ownerId?: string;
+  createdBy?: string;
+  ownerIds?: string[];
+  userCount?: number;
   plan?: string;
+  currency?: string;
   billing?: {
     nextBillingDate?: string;
   };

@@ -3,6 +3,7 @@ import { onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth
 import { doc, getDoc, setDoc, collection, query, where, getDocs, updateDoc, deleteDoc, limit, addDoc, serverTimestamp, getDocFromServer } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { setApiOrgId, generateHumanId } from './api';
+import { toast } from 'sonner';
 
 export interface UserPreferences {
   theme?: 'light' | 'dark' | 'system';
@@ -97,9 +98,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           orgId = generateHumanId('organizations');
           await setDoc(doc(db, 'organizations', orgId), {
             name: 'Main Organization',
-            currency: 'INR',
+            currency: 'USD',
             createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
+            updatedAt: serverTimestamp(),
+            plan: 'free',
+            ownerIds: [currentUser.uid],
+            createdBy: currentUser.uid,
+            userCount: 1
           });
         }
 
@@ -112,6 +117,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           activeOrgId: orgId
         };
         await setDoc(docRef, userData);
+      } else {
+        const errObj = new Error("Account not found. Please ask your administrator for an invite or sign up to create a new organization.");
+        try {
+          await currentUser.delete();
+        } catch (e) {
+          console.error("Failed to delete orphaned auth account", e);
+        }
+        await signOut(auth);
+        throw errObj;
       }
 
       if (userData) {
@@ -158,11 +172,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch(err) {
       console.error("Auth state change error:", err);
-      await signOut(auth);
+      try { await signOut(auth); } catch (e) {}
       setUser(null);
       setProfile(null);
       setOrganization(null);
       setApiOrgId(null);
+      throw err;
     }
   };
 
@@ -185,8 +200,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setOrganization(null);
           setApiOrgId(null);
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('Auth state change error:', error);
+        toast.error(error.message || 'An error occurred during sign in');
       } finally {
         setLoading(false);
       }

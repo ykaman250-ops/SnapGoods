@@ -316,9 +316,9 @@ app.get("/api/health", (req, res) => {
         return res.status(500).json({ error: 'System Configuration Error: Firebase Service Account Key is missing.' });
       }
 
-      const { email, password, orgName, adminName } = req.body;
+      const { email, password, orgName, adminName, industry, country, currency, designation } = req.body;
 
-      if (!email || !password || !orgName || !adminName) {
+      if (!email || !password || !orgName || !adminName || !industry || !country) {
         return res.status(400).json({ error: 'Missing required fields.' });
       }
 
@@ -355,6 +355,9 @@ app.get("/api/health", (req, res) => {
       const orgRef = db.collection('organizations').doc(customOrgId);
       await orgRef.set({
         name: orgName,
+        industry,
+        country,
+        currency: currency || 'USD',
         createdBy: userRecord.uid,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         plan: 'free',
@@ -366,6 +369,7 @@ app.get("/api/health", (req, res) => {
       await db.collection('users').doc(userRecord.uid).set({
         email,
         name: adminName,
+        designation: designation || 'Owner',
         status: 'active',
         activeOrgId: orgRef.id,
         orgRoles: { [orgRef.id]: 'owner' },
@@ -770,6 +774,94 @@ app.get("/api/health", (req, res) => {
       res.status(200).json({ message: 'User role updated successfully' });
     } catch (error: any) {
       console.error('Error updating user role:', error);
+      res.status(500).json({ error: error.message || 'Internal Server Error' });
+    }
+  });
+
+  // Secure Admin Organization Deletion Route
+  app.delete("/api/admin/organizations/:orgId", verifyAdmin, async (req, res) => {
+    try {
+      if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY && admin.apps.length === 0) {
+        return res.status(500).json({ error: 'System Configuration Error: Firebase Service Account Key is missing.' });
+      }
+
+      const { orgId } = req.params;
+      const adminToken = (req as any).user;
+      
+      const db = getFirestore(admin.app(), databaseId);
+      const orgDoc = await db.collection('organizations').doc(orgId).get();
+      
+      if (!orgDoc.exists) {
+        return res.status(404).json({ error: 'Organization not found.' });
+      }
+      
+      // Permissions check: Superadmin or Owner of the org
+      if (adminToken.role !== 'superadmin' && !(adminToken.role === 'owner' && adminToken.activeOrgId === orgId)) {
+         return res.status(403).json({ error: 'Only owners or superadmins can delete organizations.' });
+      }
+
+      // Cleanup Users
+      const usersSnapshot = await db.collection('users').get();
+      for (const userDoc of usersSnapshot.docs) {
+        const userData = userDoc.data();
+        if (userData.orgRoles && userData.orgRoles[orgId]) {
+          const orgRolesCount = Object.keys(userData.orgRoles).length;
+          if (orgRolesCount <= 1) {
+            // Only member of this org, delete the whole auth user and profile
+            try {
+              if (userDoc.id !== adminToken.uid) { // Avoid deleting the admin during the loop, we'll do it last or rely on them signing out
+                await admin.auth().deleteUser(userDoc.id).catch((e) => console.error("Firebase auth delete error for user", userDoc.id, e));
+              }
+              await db.collection('users').doc(userDoc.id).delete();
+            } catch (e) {
+               console.error("Failed to delete user", userDoc.id, e);
+            }
+          } else {
+            // Has other orgs, just remove from this one
+            const updates: any = {
+              [`orgRoles.${orgId}`]: admin.firestore.FieldValue.delete()
+            };
+            if (userData.activeOrgId === orgId) {
+              const remainingOrgs = Object.keys(userData.orgRoles).filter(id => id !== orgId);
+              updates.activeOrgId = remainingOrgs.length > 0 ? remainingOrgs[0] : null;
+            }
+            await db.collection('users').doc(userDoc.id).update(updates);
+          }
+        }
+      }
+      
+      // Note: We leave deleting the subcollections to a script or just let them be orphaned
+      // as Firestore doesn't have recursive delete without tools. Or we can manually clean them up.
+      
+      const collectionsToWipe = ['assets', 'employees', 'assignments', 'audit_logs', 'asset_history', 'asset_categories', 'maintenance_logs', 'locations', 'vendors', 'custom_reports', 'inventory_items', 'inventory_transactions'];
+      
+      for (const collName of collectionsToWipe) {
+        const snapshot = await db.collection(collName).where('orgId', '==', orgId).get();
+        if (!snapshot.empty) {
+          const docs = snapshot.docs;
+          for (let i = 0; i < docs.length; i += 500) {
+            const batch = db.batch();
+            const chunk = docs.slice(i, i + 500);
+            chunk.forEach(doc => {
+              batch.delete(doc.ref);
+            });
+            await batch.commit();
+          }
+        }
+      }
+
+      // Delete organization doc itself
+      await db.collection('organizations').doc(orgId).delete();
+      
+      // Finally delete the admin auth user if it was their only org
+      const adminUserDocRaw = await db.collection('users').doc(adminToken.uid).get();
+      if (!adminUserDocRaw.exists) {
+         await admin.auth().deleteUser(adminToken.uid).catch((e) => console.error("Firebase auth delete error for admin", adminToken.uid, e));
+      }
+
+      res.status(200).json({ message: 'Organization deleted.' });
+    } catch (error: any) {
+      console.error('Error deleting organization:', error);
       res.status(500).json({ error: error.message || 'Internal Server Error' });
     }
   });

@@ -70,6 +70,8 @@ export default function Admin() {
 
   const [isClearDataOpen, setIsClearDataOpen] = useState(false);
   const [clearPassword, setClearPassword] = useState('');
+  const [isDeleteAccountOpen, setIsDeleteAccountOpen] = useState(false);
+  const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
   const [exportType, setExportType] = useState('all');
   const [exportFormat, setExportFormat] = useState('json');
   const [exportStatus, setExportStatus] = useState('all');
@@ -872,6 +874,50 @@ export default function Admin() {
     }
   };
 
+  const handleDeleteAccount = async () => {
+    if (deleteAccountPassword !== 'deletePermanentlyrpj') {
+      toast.error('Invalid confirmation code', { id: 'delete-account' });
+      return;
+    }
+    
+    setIsSubmitting(true);
+    try {
+      toast.loading('Deleting account permanently...', { id: 'delete-account' });
+      
+      // Delete the organization itself via API
+      if (organization?.id) {
+        const token = await auth.currentUser?.getIdToken();
+        const res = await fetch(`/api/admin/organizations/${organization.id}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        if (!res.ok) {
+           const errData = await res.json();
+           throw new Error(errData.error || 'Failed to delete organization');
+        }
+      }
+      
+      setIsDeleteAccountOpen(false);
+      setDeleteAccountPassword('');
+      toast.success('Account and organization deleted successfully!', { id: 'delete-account' });
+      
+      try {
+         await auth.currentUser?.delete();
+      } catch (e) {
+         console.error("Failed to delete auth user:", e);
+      }
+      await auth.signOut();
+      window.location.href = '/login';
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.message || 'Failed to delete account', { id: 'delete-account' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handlePrintSelectedUsers = () => {
     const selectedData = users
       .filter(u => selectedUsers.includes(u.id))
@@ -1602,6 +1648,7 @@ export default function Admin() {
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
+                
               </CardContent>
             </Card>
           </div>
@@ -1647,6 +1694,57 @@ export default function Admin() {
                   {isSubmitting ? 'Saving...' : 'Save Settings'}
                 </Button>
               </form>
+              
+              <div className="mt-8 pt-8 border-t border-border">
+                <h3 className="text-lg font-medium text-red-600 mb-4">Danger Zone</h3>
+                {(organization?.createdBy === profile?.uid || (!organization?.createdBy && (organization?.ownerIds?.includes(profile?.uid || '') || profile?.orgRoles?.[organization?.id as string] === 'owner' || profile?.orgRoles?.[organization?.id as string] === 'superadmin'))) && (
+                  <Dialog open={isDeleteAccountOpen} onOpenChange={(open) => {
+                    setIsDeleteAccountOpen(open);
+                    if (!open) setDeleteAccountPassword('');
+                  }}>
+                    <DialogTrigger render={
+                      <Button className="w-full md:w-auto bg-red-600 text-white hover:bg-red-700 border border-red-700">
+                        <Trash2 className="w-4 h-4 mr-2" /> Delete Account Permanently
+                      </Button>
+                    } />
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle className="text-red-600">Delete Account Permanently?</DialogTitle>
+                      </DialogHeader>
+                      <div className="py-4 space-y-4">
+                        <p className="text-muted-foreground font-bold">
+                          This is a destructive action!
+                        </p>
+                        <p className="text-muted-foreground">
+                          This action will permanently delete all your data and the entire organization account. This cannot be undone.
+                        </p>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-foreground">
+                            Type "deletePermanentlyrpj" to confirm:
+                          </label>
+                          <Input 
+                            type="text" 
+                            value={deleteAccountPassword}
+                            onChange={(e) => setDeleteAccountPassword(e.target.value)}
+                            placeholder="Enter confirmation code"
+                            className="w-full"
+                          />
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" disabled={isSubmitting} onClick={() => setIsDeleteAccountOpen(false)}>Cancel</Button>
+                        <Button 
+                          disabled={isSubmitting || deleteAccountPassword !== 'deletePermanentlyrpj'} 
+                          className="bg-red-600 hover:bg-red-700 text-primary-foreground disabled:opacity-50" 
+                          onClick={handleDeleteAccount}
+                        >
+                          {isSubmitting ? 'Deleting...' : 'Yes, Delete Account'}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
