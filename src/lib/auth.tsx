@@ -33,6 +33,8 @@ export interface Organization {
   ownerIds: string[];
   userCount: number;
   currency?: string;
+  industry?: string;
+  country?: string;
 }
 
 interface AuthContextType {

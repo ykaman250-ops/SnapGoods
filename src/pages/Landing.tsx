@@ -9,9 +9,6 @@ import {
 import { Logo } from '../components/Logo';
 import { AbstractLogoStrip } from '../components/AbstractLogos';
 
-// --- API Helpers ---
-import { GoogleGenAI, Type } from "@google/genai";
-
 // --- Animation Components ---
 export const FadeIn = ({ children, delay = 0, className = "", direction = "up" }: any) => {
   const [isVisible, setIsVisible] = useState(false);
@@ -67,12 +64,6 @@ const FAQItem = ({ question, answer }: any) => {
 
 export default function Landing() {
   const navigate = useNavigate();
-  // --- AI Demo State ---
-  const [aiInput, setAiInput] = useState("Just bought 3 new MacBook Pro M3s (32GB RAM, 1TB SSD) for the new engineering hires: Sarah, Michael, and David. Oh, and grabbed a Dell 32-inch 4K monitor for the lobby display.");
-  const [isExtracting, setIsExtracting] = useState(false);
-  const [extractedAssets, setExtractedAssets] = useState<any[] | null>(null);
-  const [aiError, setAiError] = useState("");
-
   // --- Scroll State for Cards ---
   const scrollRef = useRef<HTMLDivElement>(null);
   const isDown = useRef(false);
@@ -122,43 +113,6 @@ export default function Landing() {
     }
   };
 
-  const handleAIExtract = async () => {
-    if (!aiInput.trim()) return;
-    setIsExtracting(true);
-    setAiError("");
-    setExtractedAssets(null);
-    
-    try {
-      if (aiInput.length > 2000) {
-        throw new Error("Input text exceeds maximum length of 2000 characters.");
-      }
-
-      const response = await fetch('/api/extract-assets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: aiInput })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        throw new Error(errorData?.error || "AI extraction is currently under maintenance. Please try again later.");
-      }
-
-      const data = await response.json();
-      
-      if (Array.isArray(data.assets)) {
-        setExtractedAssets(data.assets);
-      } else {
-        throw new Error("Invalid format returned from server");
-      }
-    } catch (err: any) {
-      console.error("AI Extraction Error:", err);
-      setAiError(err.message || "Oops! Our AI couldn't parse that. Try tweaking the text.");
-    } finally {
-      setIsExtracting(false);
-    }
-  };
-
   return (
     <div 
       className="min-h-screen text-[#1f1f1f] font-sans selection:bg-[#c5a059]/20 relative overflow-x-hidden bg-texture-light"
@@ -203,7 +157,6 @@ export default function Landing() {
           </div>
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-[#737373]">
             <a href="#features" className="hover:text-[#1f1f1f] transition-colors">Features</a>
-            <a href="#ai-demo" className="hover:text-[#c5a059] flex items-center gap-1 transition-colors"><Sparkles className="w-3.5 h-3.5" /> AI Demo</a>
             <a href="#how-it-works" className="hover:text-[#1f1f1f] transition-colors">How it Works</a>
             <a href="#pricing" className="hover:text-[#1f1f1f] transition-colors">Pricing</a>
           </div>
@@ -430,142 +383,6 @@ export default function Landing() {
                 </div>
               </FadeIn>
             ))}
-          </div>
-        </div>
-      </section>
-
-      {/* 4.5 AI Integration Demo Section */}
-      <section id="ai-demo" className="py-24 bg-texture-dark border-y border-[#333] relative overflow-hidden text-white">
-        {/* Glow effect */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-4xl h-[400px] bg-[#c5a059]/20 blur-[120px] rounded-full pointer-events-none"></div>
-
-        <div className="max-w-7xl mx-auto px-6 relative z-10">
-          <FadeIn>
-            <div className="text-center max-w-2xl mx-auto mb-16">
-              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/5 border border-white/10 text-sm font-medium mb-6 text-[#c5a059]">
-                <Sparkles className="w-4 h-4" />
-                Powered by Generative AI
-              </div>
-              <h2 className="text-3xl sm:text-4xl md:text-5xl font-semibold tracking-tight text-white mb-6">Say goodbye to manual entry.</h2>
-              <p className="text-[#a3a3a3] text-lg leading-relaxed">
-                Paste messy notes, invoice emails, or chat logs directly into SnapGoods. Our AI instantly extracts, structures, and categorizes your hardware in seconds.
-              </p>
-            </div>
-          </FadeIn>
-
-          <div className="grid lg:grid-cols-2 gap-8 items-start">
-            {/* Left: Input */}
-            <FadeIn delay={100} direction="right">
-              <div className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-md">
-                <div className="flex items-center justify-between mb-4">
-                  <label className="text-sm font-medium text-[#a3a3a3]">Raw Input (Notes, Email, etc.)</label>
-                  <Cpu className="w-4 h-4 text-[#c5a059]" />
-                </div>
-                <textarea 
-                  value={aiInput}
-                  onChange={(e) => setAiInput(e.target.value)}
-                  maxLength={2000}
-                  className="w-full h-48 bg-black/40 border border-white/10 rounded-xl p-4 text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#c5a059]/50 resize-none transition-all placeholder-[#404040]"
-                  placeholder="Paste your raw text here..."
-                />
-                <div className="text-xs text-right text-muted mt-2">{aiInput.length}/2000 chars</div>
-                
-                <button 
-                  onClick={handleAIExtract}
-                  disabled={isExtracting || !aiInput.trim()}
-                  className="mt-4 w-full py-4 rounded-xl bg-[#c5a059] text-[#1f1f1f] font-bold hover:bg-[#dfc182] transition-all shadow-[0_0_20px_rgba(197,160,89,0.2)] hover:shadow-[0_0_30px_rgba(197,160,89,0.4)] flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isExtracting ? (
-                    <><Loader2 className="w-5 h-5 animate-spin" /> AI is Analyzing...</>
-                  ) : (
-                    <><Sparkles className="w-5 h-5" /> ✨ Extract Assets</>
-                  )}
-                </button>
-                {aiError && <p className="text-red-400 text-sm mt-3 text-center">{aiError}</p>}
-              </div>
-            </FadeIn>
-
-            {/* Right: Output */}
-            <FadeIn delay={200} direction="left" className="h-full">
-              <div className="bg-black/40 border border-white/10 rounded-3xl p-6 backdrop-blur-md h-full min-h-[300px] flex flex-col">
-                <div className="flex items-center justify-between mb-6">
-                  <label className="text-sm font-medium text-[#a3a3a3]">Structured Data Output</label>
-                  <div className="px-2 py-1 bg-white/10 rounded text-xs text-white/70 font-mono">JSON / UI</div>
-                </div>
-
-                {!extractedAssets && !isExtracting && (
-                  <div className="flex-1 flex flex-col items-center justify-center text-center text-[#a3a3a3] border-2 border-dashed border-white/10 rounded-xl p-8">
-                    <Database className="w-8 h-8 mb-3 opacity-50" />
-                    <p>Click "Extract Assets" to see the AI in action.</p>
-                  </div>
-                )}
-
-                {isExtracting && (
-                  <div className="flex-1 flex flex-col items-center justify-center text-center text-[#c5a059]">
-                    <div className="relative">
-                      <div className="absolute inset-0 border-4 border-[#c5a059]/20 rounded-full"></div>
-                      <div className="w-12 h-12 border-4 border-transparent border-t-[#c5a059] rounded-full animate-spin"></div>
-                    </div>
-                    <p className="mt-4 text-sm font-medium animate-pulse">Structuring data...</p>
-                  </div>
-                )}
-
-                {extractedAssets && !isExtracting && (
-                  <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-2 custom-scrollbar relative pb-16">
-                    {extractedAssets.map((asset, idx) => (
-                      <div key={idx} className="bg-white/5 border border-white/10 rounded-xl p-4 hover:border-[#c5a059]/50 transition-colors shadow-sm">
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="font-semibold text-white whitespace-pre-wrap">{asset.name}</div>
-                          <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#c5a059]/20 text-[#dfc182] border border-[#c5a059]/30 whitespace-nowrap ml-3">
-                            {asset.category}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3 mb-4">
-                          <div className="bg-white/5 rounded-lg p-2.5 border border-white/5">
-                            <div className="text-[10px] uppercase tracking-wider text-[#a3a3a3] mb-1">Quantity</div>
-                            <div className="text-sm text-white font-medium">{asset.quantity || 1} Unit(s)</div>
-                          </div>
-                          {asset.specs && (
-                            <div className="bg-white/5 rounded-lg p-2.5 border border-white/5">
-                              <div className="text-[10px] uppercase tracking-wider text-[#a3a3a3] mb-1">Specifications</div>
-                              <div className="text-xs text-white/90 line-clamp-2" title={asset.specs}>{asset.specs}</div>
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex flex-col gap-1.5">
-                          <div className="text-[10px] uppercase tracking-wider text-[#a3a3a3]">Assigned To</div>
-                          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-white/80">
-                            {Array.isArray(asset.assignedTo) && asset.assignedTo.length > 0 ? (
-                              asset.assignedTo.map((assignee: string, i: number) => (
-                                <div key={i} className="flex items-center gap-1.5 bg-[#1f1f1f] py-1 px-2.5 rounded-lg border border-white/10">
-                                  <Users className="w-3.5 h-3.5 text-[#c5a059]" />
-                                  {assignee}
-                                </div>
-                              ))
-                            ) : (
-                              <div className="flex items-center gap-1.5 bg-[#1f1f1f] py-1 px-2.5 rounded-lg border border-white/10 opacity-70">
-                                  <Users className="w-3.5 h-3.5 text-[#c5a059]" />
-                                  Unassigned
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    
-                    <div className="mt-4 p-4 border border-[#c5a059]/30 bg-[#c5a059]/10 rounded-xl text-center">
-                      <div className="flex items-center justify-center gap-2 mb-2">
-                        <Activity className="w-4 h-4 text-[#c5a059]" />
-                        <span className="text-xs font-bold uppercase tracking-wider text-[#dfc182]">Live Demo Output</span>
-                      </div>
-                      <p className="text-xs text-[#a3a3a3] leading-relaxed">
-                        This is an automated preview. The production system extracts significantly more detailed metadata including warranty information, serial numbers, deprecation schedules, and exact facility locations.
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </FadeIn>
           </div>
         </div>
       </section>

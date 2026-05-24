@@ -19,7 +19,8 @@ import {
   RefreshCw,
   Users,
   Settings,
-  Globe
+  Globe,
+  Box
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -55,6 +56,7 @@ import { auth } from '../lib/firebase';
 import { useAuth } from '../lib/auth';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
+import { COUNTRIES, INDUSTRIES } from '../lib/countries';
 
 export default function Admin() {
   const { profile, organization, refreshContext } = useAuth();
@@ -67,6 +69,7 @@ export default function Admin() {
   const [isCreateUserOpen, setIsCreateUserOpen] = useState(false);
   const [newUserRole, setNewUserRole] = useState('viewer');
   const [newUserPassword, setNewUserPassword] = useState('');
+  const currentProfileRole = profile?.orgRoles?.[organization?.id as string] || 'viewer';
 
   const [isClearDataOpen, setIsClearDataOpen] = useState(false);
   const [clearPassword, setClearPassword] = useState('');
@@ -124,14 +127,18 @@ export default function Admin() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orgForm, setOrgForm] = useState({
     name: organization?.name || '',
-    currency: organization?.currency || 'USD'
+    currency: organization?.currency || 'USD',
+    industry: organization?.industry || '',
+    country: organization?.country || ''
   });
 
   useEffect(() => {
     if (organization) {
       setOrgForm({
         name: organization.name,
-        currency: organization.currency || 'USD'
+        currency: organization.currency || 'USD',
+        industry: organization.industry || '',
+        country: organization.country || ''
       });
     }
   }, [organization]);
@@ -247,7 +254,10 @@ export default function Admin() {
     try {
       toast.loading('Preparing export...', { id: 'export' });
       
-      let filename = `nv-assets-${exportType}-${new Date().toISOString().split('T')[0]}`;
+      const now = new Date();
+      const dateStr = now.toISOString().split('T')[0];
+      const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+      let filename = `SnapGoods-${exportType}-${dateStr}_${timeStr}`;
       
       const filterData = (items: any[], type: string) => {
         return items.filter(item => {
@@ -287,10 +297,16 @@ export default function Admin() {
         const allAssets = await api.list('assets');
         const allEmployees = await api.list('employees');
         const allAssignments = await api.list('assignments');
+        const allLocations: any[] = await api.list('locations') || [];
+        const allVendors: any[] = await api.list('vendors') || [];
         
         const filteredAssets = filterData(allAssets, 'assets');
         const filteredEmployees = filterData(allEmployees, 'employees');
         const filteredAssignments = filterData(allAssignments, 'assignments');
+
+        const getVendorName = (id: string) => allVendors.find((v: any) => v.id === id)?.name || id;
+        const getLocationName = (id: string) => allLocations.find((l: any) => l.id === id)?.name || id;
+
 
         const formatDate = (d: any) => {
           if (!d) return '';
@@ -338,30 +354,60 @@ export default function Admin() {
             
             aoa.push([`${group} Assets`]);
             
+            const customKeys = new Set<string>();
+            items.forEach(a => {
+              if (a.customData) {
+                Object.keys(a.customData).forEach(k => customKeys.add(k));
+              }
+            });
+            const customFieldsList = Array.from(customKeys);
+
+            const extraHeaders = ['Location', 'Department', 'Vendor', 'Purchase Date', 'Purchase Cost', 'Useful Life (Years)', 'Salvage Value', 'Depreciation Method', 'Warranty Expiry', 'Next Service Date'];
+            const getExtraFields = (a: any) => [
+              a.locationId ? getLocationName(a.locationId) : '',
+              a.department || '',
+              a.vendorId ? getVendorName(a.vendorId) : '',
+              a.purchaseDate ? formatDate(a.purchaseDate) : '',
+              a.purchaseCost || '',
+              a.usefulLifeYears || '',
+              a.salvageValue || '',
+              a.depreciationMethod || '',
+              a.warrantyExpiry ? formatDate(a.warrantyExpiry) : '',
+              a.nextServiceDate ? formatDate(a.nextServiceDate) : ''
+            ];
+
             let headers: string[] = [];
             if (group === 'Laptop/Desktop') {
-              headers = ['Asset Code', 'Tag', 'Brand', 'Model', 'Processor', 'RAM', 'Storage', 'Serial Number', 'Status', 'Created Date', 'Remarks'];
+              headers = ['Asset Code', 'Tag', 'Brand', 'Model', 'Processor', 'RAM', 'Storage', 'Serial Number', 'Status', 'Created Date', 'Remarks', ...extraHeaders, ...customFieldsList];
               aoa.push(headers);
               items.forEach(a => {
-                aoa.push([a.assetCode || '', a.tag || '', a.brand || '', a.model || '', a.processor || '', a.ram || '', a.storage || '', a.serialNumber || '', a.status || '', formatDate(a.createdAt), a.remarks || '']);
+                const row = [a.assetCode || '', a.tag || '', a.brand || '', a.model || '', a.processor || '', a.ram || '', a.storage || '', a.serialNumber || '', a.status || '', formatDate(a.createdAt), a.remarks || '', ...getExtraFields(a)];
+                customFieldsList.forEach(k => row.push(a.customData?.[k] !== undefined ? String(a.customData[k]) : ''));
+                aoa.push(row);
               });
             } else if (group === 'Printer') {
-              headers = ['Asset Code', 'Tag', 'Brand', 'Model', 'Printer Type', 'Connectivity', 'Serial Number', 'Status', 'Created Date', 'Remarks'];
+              headers = ['Asset Code', 'Tag', 'Brand', 'Model', 'Printer Type', 'Connectivity', 'Serial Number', 'Status', 'Created Date', 'Remarks', ...extraHeaders, ...customFieldsList];
               aoa.push(headers);
               items.forEach(a => {
-                aoa.push([a.assetCode || '', a.tag || '', a.brand || '', a.model || '', a.printerType || '', a.connectivity || '', a.serialNumber || '', a.status || '', formatDate(a.createdAt), a.remarks || '']);
+                const row = [a.assetCode || '', a.tag || '', a.brand || '', a.model || '', a.printerType || '', a.connectivity || '', a.serialNumber || '', a.status || '', formatDate(a.createdAt), a.remarks || '', ...getExtraFields(a)];
+                customFieldsList.forEach(k => row.push(a.customData?.[k] !== undefined ? String(a.customData[k]) : ''));
+                aoa.push(row);
               });
             } else if (group === 'SIM Card') {
-              headers = ['Mobile Number', 'Service Provider', 'Plan Status', 'SIM Number', 'Status', 'Created Date', 'Remarks'];
+              headers = ['Mobile Number', 'Service Provider', 'Plan Status', 'SIM Number', 'Status', 'Created Date', 'Remarks', ...extraHeaders, ...customFieldsList];
               aoa.push(headers);
               items.forEach(a => {
-                aoa.push([a.mobileNumber || '', a.serviceProvider || '', a.planStatus || '', a.simNumber || '', a.status || '', formatDate(a.createdAt), a.remarks || '']);
+                const row = [a.mobileNumber || '', a.serviceProvider || '', a.planStatus || '', a.simNumber || '', a.status || '', formatDate(a.createdAt), a.remarks || '', ...getExtraFields(a)];
+                customFieldsList.forEach(k => row.push(a.customData?.[k] !== undefined ? String(a.customData[k]) : ''));
+                aoa.push(row);
               });
             } else {
-              headers = ['Asset Code', 'Tag', 'Category', 'Brand', 'Model', 'Status', 'Created Date', 'Remarks'];
+              headers = ['Asset Code', 'Tag', 'Category', 'Brand', 'Model', 'Status', 'Created Date', 'Remarks', ...extraHeaders, ...customFieldsList];
               aoa.push(headers);
               items.forEach(a => {
-                aoa.push([a.assetCode || '', a.tag || '', a.category || '', a.brand || '', a.model || '', a.status || '', formatDate(a.createdAt), a.remarks || '']);
+                const row = [a.assetCode || '', a.tag || '', a.category || '', a.brand || '', a.model || '', a.status || '', formatDate(a.createdAt), a.remarks || '', ...getExtraFields(a)];
+                customFieldsList.forEach(k => row.push(a.customData?.[k] !== undefined ? String(a.customData[k]) : ''));
+                aoa.push(row);
               });
             }
             aoa.push([]);
@@ -476,6 +522,36 @@ export default function Admin() {
           formatSheet(ws, aoa, 4);
           XLSX.utils.book_append_sheet(wb, ws, 'Audit Logs');
         }
+
+        if (exportType === 'all' || ['inventory_items', 'inventory_transactions', 'maintenance_logs', 'locations', 'vendors', 'asset_categories'].includes(exportType)) {
+          const typesToExport = exportType === 'all' ? ['inventory_items', 'inventory_transactions', 'maintenance_logs', 'locations', 'vendors', 'asset_categories'] : [exportType];
+          
+          for (const type of typesToExport) {
+            const colData = await api.list(type);
+            const filteredColData = filterData(colData, type);
+            if (filteredColData.length > 0) {
+              const headers = Array.from(new Set(filteredColData.flatMap(Object.keys)));
+              const aoa: any[][] = [
+                [reportTitle],
+                [generatedOn],
+                [],
+                headers
+              ];
+              filteredColData.forEach(row => {
+                aoa.push(headers.map(h => {
+                  let val = row[h];
+                  if (val?.seconds) val = formatDate(val);
+                  if (typeof val === 'object') val = JSON.stringify(val);
+                  return val;
+                }));
+              });
+              const ws = XLSX.utils.aoa_to_sheet(aoa);
+              ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }];
+              formatSheet(ws, aoa, 4);
+              XLSX.utils.book_append_sheet(wb, ws, type.replace('_', ' '));
+            }
+          }
+        }
         
         if (wb.SheetNames.length === 0) {
           const ws = XLSX.utils.aoa_to_sheet([['No data found']]);
@@ -488,18 +564,17 @@ export default function Admin() {
       }
       
       if (exportType === 'all') {
-        const assetsData = filterData(await api.list('assets'), 'assets').map(({ location, ...rest }) => rest);
-        const employeesData = filterData(await api.list('employees'), 'employees');
-        const assignmentsData = filterData(await api.list('assignments'), 'assignments');
-        const usersData = filterData(await api.list('users'), 'users');
+        const collections = ['assets', 'employees', 'assignments', 'users', 'audit_logs', 'locations', 'vendors', 'asset_categories', 'inventory_items', 'inventory_transactions', 'maintenance_logs', 'custom_reports'];
+        const dataToExport: any = { timestamp: new Date().toISOString() };
         
-        const dataToExport = {
-          assets: assetsData,
-          employees: employeesData,
-          assignments: assignmentsData,
-          users: usersData,
-          timestamp: new Date().toISOString()
-        };
+        for (const col of collections) {
+          const colData = filterData(await api.list(col), col);
+          if (col === 'assets') {
+             dataToExport[col] = colData.map(({ location, ...rest }: any) => rest);
+          } else {
+             dataToExport[col] = colData;
+          }
+        }
         
         const blob = new Blob([JSON.stringify(dataToExport, null, 2)], { type: 'application/json' });
         downloadBlob(blob, `${filename}.json`);
@@ -553,13 +628,25 @@ export default function Admin() {
 
     try {
       toast.loading('Reading file...', { id: 'import' });
-      
+
+      // Fetch reference data for matching
+      const allLocations: any[] = await api.list('locations') || [];
+      const allVendors: any[] = await api.list('vendors') || [];
+
       if (file.name.endsWith('.json')) {
         const text = await file.text();
         const data = JSON.parse(text);
 
-        if (!data.assets && !data.employees) {
-          throw new Error('Invalid backup file format');
+        const validCollections = [
+          'assets', 'employees', 'assignments', 'users', 'audit_logs', 
+          'locations', 'vendors', 'asset_categories', 'inventory_items', 
+          'inventory_transactions', 'maintenance_logs', 'custom_reports'
+        ];
+
+        const hasValidCollection = validCollections.some(col => Array.isArray(data[col]));
+
+        if (!hasValidCollection) {
+          throw new Error('Invalid backup file format. Expected a full system backup JSON containing collections.');
         }
 
         setPendingImportData(data);
@@ -598,6 +685,24 @@ export default function Admin() {
             firstRowKeysLower.some(k => ['employeecode', 'empcode', 'name', 'department', 'email', 'employeename', 'employeeemail', 'employeedepartment', 'designation', 'role'].includes(k))
           ) {
             detectedType = 'employees';
+          } else if (
+            firstRowKeysLower.some(k => k.includes('vendor')) ||
+            firstRowKeysLower.includes('contactperson') || firstRowKeysLower.includes('gstnumber')
+          ) {
+            detectedType = 'vendors';
+          } else if (
+            firstRowKeysLower.includes('itemid') || firstRowKeysLower.includes('sku') || 
+            (firstRowKeysLower.includes('quantity') && firstRowKeysLower.includes('minquantity'))
+          ) {
+            detectedType = 'inventory_items';
+          } else if (
+            firstRowKeysLower.includes('locationid') || firstRowKeysLower.includes('address') || firstRowKeysLower.includes('city')
+          ) {
+            detectedType = 'locations';
+          } else if (
+            firstRowKeysLower.some(k => ['maintenance', 'repair', 'cost', 'servicedate', 'issue'].includes(k))
+          ) {
+            detectedType = 'maintenance_logs';
           } else {
             console.warn(`Could not auto-detect data type for sheet ${wsName}, skipping.`);
             continue;
@@ -610,7 +715,7 @@ export default function Admin() {
           toast.loading(`Importing ${detectedType} from ${wsName}...`, { id: 'import' });
 
           const trimStr = (val: any) => typeof val === 'string' ? val.trim() : val;
-          const assetFields = ['assetCode', 'tag', 'category', 'brand', 'model', 'processor', 'ram', 'storage', 'serialNumber', 'status', 'printerType', 'connectivity', 'mobileNumber', 'serviceProvider', 'planStatus', 'simNumber', 'createdAt'];
+          const assetFields = ['assetCode', 'tag', 'category', 'brand', 'model', 'processor', 'ram', 'storage', 'serialNumber', 'status', 'printerType', 'connectivity', 'mobileNumber', 'serviceProvider', 'planStatus', 'simNumber', 'createdAt', 'purchaseDate', 'purchaseCost', 'usefulLifeYears', 'salvageValue', 'depreciationMethod', 'warrantyExpiry', 'nextServiceDate', 'department', 'remarks'];
           const employeeFields = ['employeeCode', 'name', 'email', 'department', 'designation', 'status', 'createdAt'];
 
           const seenAssetCodes = new Set(assets.map(a => a.assetCode?.toLowerCase()).filter(Boolean));
@@ -633,6 +738,16 @@ export default function Admin() {
               if (row['SIM Number']) normalizedRow.simNumber = trimStr(row['SIM Number']);
               if (row['Printer Type']) normalizedRow.printerType = trimStr(row['Printer Type']);
               if (row['Serial Number']) normalizedRow.serialNumber = trimStr(row['Serial Number']);
+
+              if (row['Purchase Date']) normalizedRow.purchaseDate = trimStr(row['Purchase Date']);
+              if (row['Purchase Cost']) normalizedRow.purchaseCost = Number(trimStr(row['Purchase Cost'])) || 0;
+              if (row['Useful Life (Years)']) normalizedRow.usefulLifeYears = Number(trimStr(row['Useful Life (Years)'])) || 0;
+              if (row['Salvage Value']) normalizedRow.salvageValue = Number(trimStr(row['Salvage Value'])) || 0;
+              if (row['Depreciation Method']) normalizedRow.depreciationMethod = trimStr(row['Depreciation Method']);
+              if (row['Warranty Expiry']) normalizedRow.warrantyExpiry = trimStr(row['Warranty Expiry']);
+              if (row['Next Service Date']) normalizedRow.nextServiceDate = trimStr(row['Next Service Date']);
+              if (row['Department']) normalizedRow.department = trimStr(row['Department']);
+              if (row['Remarks']) normalizedRow.remarks = trimStr(row['Remarks']);
 
               if (detectedType === 'assets') {
                 const assetCode = normalizedRow.assetCode || normalizedRow.tag || normalizedRow.assetTag || normalizedRow.assetId;
@@ -661,6 +776,41 @@ export default function Admin() {
                   if (normalizedRow[f] !== undefined) cleanData[f] = normalizedRow[f];
                 });
                 
+                const customData: any = {};
+                const standardHeaders = new Set(['asset code', 'tag', 'brand', 'model', 'processor', 'ram', 'storage', 'serial number', 'status', 'created date', 'remarks', 'printer type', 'connectivity', 'mobile number', 'service provider', 'plan status', 'sim number', 'category', 'asset category', 'type', 'asset tag', 'asset id', 'purchase date', 'purchase cost', 'useful life (years)', 'salvage value', 'depreciation method', 'warranty expiry', 'next service date', 'vendor', 'location', 'department']);
+                for (const [key, value] of Object.entries(row)) {
+                  if (!standardHeaders.has(key.toLowerCase().trim())) {
+                    customData[key.trim()] = trimStr(value);
+                  }
+                }
+                if (Object.keys(customData).length > 0) {
+                  cleanData.customData = customData;
+                }
+                
+                const rawLocation = trimStr(row['Location'] || row.location);
+                if (rawLocation) {
+                  const loc = allLocations.find((l: any) => l.name?.toLowerCase() === rawLocation.toLowerCase());
+                  if (loc) {
+                    cleanData.locationId = loc.id;
+                  } else {
+                    const newLocId = await api.create('locations', { name: rawLocation });
+                    allLocations.push({ id: newLocId, name: rawLocation } as any);
+                    cleanData.locationId = newLocId;
+                  }
+                }
+
+                const rawVendor = trimStr(row['Vendor'] || row.vendor);
+                if (rawVendor) {
+                  const vendor = allVendors.find((v: any) => v.name?.toLowerCase() === rawVendor.toLowerCase());
+                  if (vendor) {
+                    cleanData.vendorId = vendor.id;
+                  } else {
+                    const newVendorId = await api.create('vendors', { name: rawVendor });
+                    allVendors.push({ id: newVendorId, name: rawVendor } as any);
+                    cleanData.vendorId = newVendorId;
+                  }
+                }
+
                 cleanData.assetCode = assetCode;
                 cleanData.category = category;
                 cleanData.status = cleanData.status || 'available'; // Default to lowercase statuses
@@ -770,6 +920,10 @@ export default function Admin() {
                   await api.update('assets', asset.id, { status: 'assigned' });
                 }
                 importedCount++;
+              } else if (['vendors', 'locations', 'inventory_items', 'maintenance_logs', 'asset_categories'].includes(detectedType)) {
+                 const cleanData: any = { ...normalizedRow, createdAt: new Date() };
+                 await api.create(detectedType, cleanData);
+                 importedCount++;
               }
             } catch (err) {
               console.error('Error importing row:', row, err);
@@ -818,9 +972,17 @@ export default function Admin() {
         }
       };
 
-      await restoreCollection('assets', pendingImportData.assets);
-      await restoreCollection('employees', pendingImportData.employees);
-      await restoreCollection('assignments', pendingImportData.assignments);
+      const collectionsToRestore = [
+        'assets', 'employees', 'assignments', 'users', 'audit_logs', 
+        'locations', 'vendors', 'asset_categories', 'inventory_items', 
+        'inventory_transactions', 'maintenance_logs', 'custom_reports'
+      ];
+
+      for (const col of collectionsToRestore) {
+        if (pendingImportData[col]) {
+          await restoreCollection(col, pendingImportData[col]);
+        }
+      }
 
       toast.success('Backup restored successfully!', { id: 'import' });
       fetchData();
@@ -850,17 +1012,20 @@ export default function Admin() {
     try {
       toast.loading('Clearing all data...', { id: 'clear-data' });
       
-      // Get all collections
-      const assets = await api.list('assets');
-      const employees = await api.list('employees');
-      const assignments = await api.list('assignments');
-      const auditLogs = await api.list('audit_logs');
-      
-      // Delete all documents
-      for (const asset of assets || []) await api.delete('assets', asset.id);
-      for (const emp of employees || []) await api.delete('employees', emp.id);
-      for (const assignment of assignments || []) await api.delete('assignments', assignment.id);
-      for (const log of auditLogs || []) await api.delete('audit_logs', log.id);
+      const collectionsToClear = [
+        'assets', 'employees', 'assignments', 'audit_logs',
+        'locations', 'vendors', 'asset_categories', 'inventory_items',
+        'inventory_transactions', 'maintenance_logs', 'custom_reports'
+      ];
+
+      for (const col of collectionsToClear) {
+        const items = await api.list(col);
+        if (items) {
+          for (const item of items) {
+            await api.delete(col, item.id);
+          }
+        }
+      }
       
       setIsClearDataOpen(false);
       setClearPassword('');
@@ -938,7 +1103,7 @@ export default function Admin() {
   const downloadAssetTemplate = () => {
     try {
       const ws = XLSX.utils.json_to_sheet([
-        { 'Asset Code': 'LPT-001', 'Category': 'Laptop', 'Brand': 'Dell', 'Model': 'Latitude 5420', 'Serial Number': 'ABC12345', 'Processor': 'i5', 'RAM': '16GB', 'Storage': '512GB SSD', 'Connectivty': '', 'Mobile Number': '', 'Service Provider': '', 'Plan Status': '', 'SIM Number': '', 'Status': 'Available' }
+        { 'Asset Code': 'LPT-001', 'Tag': 'TAG-001', 'Category': 'Laptop', 'Brand': 'Dell', 'Model': 'Latitude 5420', 'Serial Number': 'ABC12345', 'Processor': 'i5', 'RAM': '16GB', 'Storage': '512GB SSD', 'Connectivty': '', 'Mobile Number': '', 'Service Provider': '', 'Plan Status': '', 'SIM Number': '', 'Status': 'Available', 'Purchase Date': '2023-01-15', 'Purchase Cost': '1200', 'Vendor': 'Tech Corp', 'Location': 'Office 1', 'Department': 'IT', 'Warranty Expiry': '2026-01-15', 'Useful Life (Years)': '3', 'Salvage Value': '200', 'Depreciation Method': 'straight_line', 'Next Service Date': '', 'Any Custom Field': 'Value' }
       ]);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Assets");
@@ -960,13 +1125,26 @@ export default function Admin() {
       toast.error('Failed to generate template');
     }
   };
+  
+  const downloadInventoryTemplate = () => {
+    try {
+      const ws = XLSX.utils.json_to_sheet([
+        { 'Item Id': 'INV-001', 'Name': 'HDMI Cable', 'Category': 'Cables', 'Quantity': 50, 'Min Quantity': 10, 'Unit Price': 5, 'Location': 'Storage A' }
+      ]);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Inventory Items");
+      XLSX.writeFile(wb, "Inventory_Import_Template.xlsx");
+    } catch (error) {
+      toast.error('Failed to generate template');
+    }
+  };
 
   const downloadFullTemplate = () => {
     try {
       const wb = XLSX.utils.book_new();
       
       const wsAssets = XLSX.utils.json_to_sheet([
-        { 'Asset Code': 'LPT-001', 'Category': 'Laptop', 'Brand': 'Dell', 'Model': 'Latitude 5420', 'Serial Number': 'ABC12345', 'Processor': 'i5', 'RAM': '16GB', 'Storage': '512GB SSD', 'Status': 'Available' }
+        { 'Asset Code': 'LPT-001', 'Tag': 'TAG-001', 'Category': 'Laptop', 'Brand': 'Dell', 'Model': 'Latitude 5420', 'Serial Number': 'ABC12345', 'Processor': 'i5', 'RAM': '16GB', 'Storage': '512GB SSD', 'Connectivty': '', 'Mobile Number': '', 'Service Provider': '', 'Plan Status': '', 'SIM Number': '', 'Status': 'Available', 'Purchase Date': '2023-01-15', 'Purchase Cost': '1200', 'Vendor': 'Tech Corp', 'Location': 'Office 1', 'Department': 'IT', 'Warranty Expiry': '2026-01-15', 'Useful Life (Years)': '3', 'Salvage Value': '200', 'Depreciation Method': 'straight_line', 'Next Service Date': '', 'Any Custom Field': 'Value' }
       ]);
       XLSX.utils.book_append_sheet(wb, wsAssets, "Assets");
 
@@ -979,6 +1157,11 @@ export default function Admin() {
         { 'Asset Code': 'LPT-001', 'Assignee Type': 'Employee', 'Assignee Code/Dept': '10001', 'Status': 'Active', 'Assigned Date': new Date().toISOString().split('T')[0] }
       ]);
       XLSX.utils.book_append_sheet(wb, wsAssignments, "Assignments");
+      
+      const wsInventory = XLSX.utils.json_to_sheet([
+        { 'Item Id': 'INV-001', 'Name': 'HDMI Cable', 'Category': 'Cables', 'Quantity': 50, 'Min Quantity': 10, 'Unit Price': 5, 'Location': 'Storage A' }
+      ]);
+      XLSX.utils.book_append_sheet(wb, wsInventory, "Inventory Items");
 
       XLSX.writeFile(wb, "Full_System_Import_Template.xlsx");
     } catch (error) {
@@ -1007,10 +1190,12 @@ export default function Admin() {
             <Database className="w-4 h-4 mr-2" />
             Data Management
           </TabsTrigger>
-          <TabsTrigger value="settings" className="data-[state=active]:bg-gold-50 data-[state=active]:text-gold-700">
-            <Settings className="w-4 h-4 mr-2" />
-            Organization Settings
-          </TabsTrigger>
+          {(currentProfileRole === 'owner' || profile?.role === 'superadmin' || profile?.email === 'ykaman250@gmail.com' || profile?.email === 'adminrajpura@nvgroup.co.in') && (
+            <TabsTrigger value="settings" className="data-[state=active]:bg-gold-50 data-[state=active]:text-gold-700">
+              <Settings className="w-4 h-4 mr-2" />
+              Organization Settings
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="users" className="flex-1 flex flex-col min-h-0">
@@ -1053,10 +1238,25 @@ export default function Admin() {
                       <label className="text-sm font-medium">Role</label>
                       <Select name="role" value={newUserRole} onValueChange={setNewUserRole}>
                         <SelectTrigger>
-                          <SelectValue />
+                          <SelectValue>
+                            {(val: any) => {
+                              const lookup: Record<string, string> = {
+                                owner: 'Owner',
+                                admin: 'Admin',
+                                manager: 'Manager',
+                                user: 'Staff',
+                                viewer: 'Viewer',
+                                active: 'Active',
+                                inactive: 'Inactive',
+                                frozen: 'Frozen'
+                              };
+                              return val ? lookup[val] || val : 'Select...';
+                            }}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="admin">Admin</SelectItem>
+                          {(currentProfileRole === 'owner' || currentProfileRole === 'superadmin') && <SelectItem value="owner">Owner</SelectItem>}
+                          {(currentProfileRole === 'owner' || currentProfileRole === 'superadmin') && <SelectItem value="admin">Admin</SelectItem>}
                           <SelectItem value="user">Staff</SelectItem>
                           <SelectItem value="viewer">Viewer</SelectItem>
                         </SelectContent>
@@ -1144,7 +1344,17 @@ export default function Admin() {
                           disabled={isSelf || isSuperAdmin || !canManageUser}
                         >
                           <SelectTrigger className="w-32">
-                            <SelectValue />
+                            <SelectValue>
+                              {(val: any) => {
+                                const lookup: Record<string, string> = {
+                                  owner: 'Owner',
+                                  admin: 'Admin',
+                                  manager: 'Manager',
+                                  viewer: 'Viewer'
+                                };
+                                return val ? lookup[val] || val : 'Select...';
+                              }}
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
                             {(profileRole === 'owner' || profileRole === 'superadmin') && <SelectItem value="owner">Owner</SelectItem>}
@@ -1161,7 +1371,16 @@ export default function Admin() {
                           disabled={isSelf || isSuperAdmin || !canManageUser}
                         >
                           <SelectTrigger className="w-32">
-                            <SelectValue />
+                            <SelectValue>
+                              {(val: any) => {
+                                const lookup: Record<string, string> = {
+                                  active: 'Active',
+                                  inactive: 'Inactive',
+                                  frozen: 'Frozen'
+                                };
+                                return val ? lookup[val] || val : 'Select...';
+                              }}
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="active">Active</SelectItem>
@@ -1393,13 +1612,34 @@ export default function Admin() {
                   <label className="text-sm font-medium">Data to Export</label>
                   <Select value={exportType} onValueChange={setExportType}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Select data" />
+                      <SelectValue placeholder="Select data">
+                        {(val: any) => {
+                          const lookup: Record<string, string> = {
+                            all: 'Complete System Backup (All Data)',
+                            assets: 'Assets Only',
+                            employees: 'Employees Only',
+                            assignments: 'Assignments Only',
+                            inventory_items: 'Inventory Items',
+                            maintenance_logs: 'Maintenance Logs',
+                            locations: 'Locations',
+                            vendors: 'Vendors',
+                            asset_categories: 'Categories',
+                            audit_logs: 'Audit Logs Only'
+                          };
+                          return val ? lookup[val] || val : 'Select data';
+                        }}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Complete System Backup (All Data)</SelectItem>
                       <SelectItem value="assets">Assets Only</SelectItem>
                       <SelectItem value="employees">Employees Only</SelectItem>
                       <SelectItem value="assignments">Assignments Only</SelectItem>
+                      <SelectItem value="inventory_items">Inventory Items</SelectItem>
+                      <SelectItem value="maintenance_logs">Maintenance Logs</SelectItem>
+                      <SelectItem value="locations">Locations</SelectItem>
+                      <SelectItem value="vendors">Vendors</SelectItem>
+                      <SelectItem value="asset_categories">Categories</SelectItem>
                       <SelectItem value="audit_logs">Audit Logs Only</SelectItem>
                     </SelectContent>
                   </Select>
@@ -1408,7 +1648,16 @@ export default function Admin() {
                   <label className="text-sm font-medium">Format</label>
                   <Select value={exportFormat} onValueChange={setExportFormat}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Select format" />
+                      <SelectValue placeholder="Select format">
+                        {(val: any) => {
+                          const lookup: Record<string, string> = {
+                            json: 'JSON (Best for backups)',
+                            csv: 'CSV (Best for spreadsheets)',
+                            excel: 'Excel (Full Report)'
+                          };
+                          return val ? lookup[val] || val : 'Select format';
+                        }}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="json">JSON (Best for backups)</SelectItem>
@@ -1421,7 +1670,16 @@ export default function Admin() {
                   <label className="text-sm font-medium">Date Range</label>
                   <Select value={dateFilterType} onValueChange={handleDateFilterChange}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Select date range" />
+                      <SelectValue placeholder="Select date range">
+                        {(val: any) => {
+                          const lookup: Record<string, string> = {
+                            all_time: 'All Time',
+                            this_month: 'This Month',
+                            custom: 'Custom Range'
+                          };
+                          return val ? lookup[val] || val : 'Select date range';
+                        }}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all_time">All Time</SelectItem>
@@ -1535,14 +1793,14 @@ export default function Admin() {
                     <Download className="w-4 h-4 mr-2" /> Download Full System Template
                   </Button>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   <div className="space-y-3">
                     <h3 className="font-semibold flex items-center text-sm"><Database className="w-4 h-4 mr-2" /> Asset Import Instructions</h3>
                     <ul className="text-sm text-muted-foreground list-disc ml-5 space-y-1">
                       <li><strong>Asset Code</strong> and <strong>Category</strong> are strictly required.</li>
-                      <li>Avoid changing the core column headers (Asset Code, Category, Status, etc.).</li>
-                      <li>Categories must match existing logic (e.g. Laptop, Printer, Mobile).</li>
+                      <li>Avoid changing the core column headers.</li>
                       <li>Check for duplicate Asset Codes before importing.</li>
+                      <li><strong>Custom Fields:</strong> Any column added that is NOT a predefined standard header will be imported as a custom field.</li>
                     </ul>
                     <Button variant="outline" className="w-full mt-2" onClick={downloadAssetTemplate}>
                       <Download className="w-4 h-4 mr-2" /> Asset Template
@@ -1553,11 +1811,20 @@ export default function Admin() {
                     <ul className="text-sm text-muted-foreground list-disc ml-5 space-y-1">
                       <li><strong>Employee Code</strong> and <strong>Name</strong> are strictly required.</li>
                       <li><strong>Employee Code</strong> must be exactly 5 digits.</li>
-                      <li>Avoid changing the core column headers (Employee Code, Name, Email, etc.).</li>
-                      <li>Duplicate Employee Codes will be skipped during import.</li>
+                      <li>Duplicate Employee Codes will be skipped.</li>
                     </ul>
                     <Button variant="outline" className="w-full mt-2" onClick={downloadEmployeeTemplate}>
                       <Download className="w-4 h-4 mr-2" /> Employee Template
+                    </Button>
+                  </div>
+                  <div className="space-y-3">
+                    <h3 className="font-semibold flex items-center text-sm"><Box className="w-4 h-4 mr-2" /> Inventory Import Instructions</h3>
+                    <ul className="text-sm text-muted-foreground list-disc ml-5 space-y-1">
+                      <li>Use predefined column headers to identify the type of data correctly.</li>
+                      <li>Provide minimum required fields like Item Id or Name.</li>
+                    </ul>
+                    <Button variant="outline" className="w-full mt-2" onClick={downloadInventoryTemplate}>
+                      <Download className="w-4 h-4 mr-2" /> Inventory Template
                     </Button>
                   </div>
                 </div>
@@ -1576,9 +1843,14 @@ export default function Admin() {
                   <div className="bg-blue-50 text-blue-800 p-3 rounded-md text-sm">
                     <strong>Summary of data to import:</strong>
                     <ul className="list-disc ml-5 mt-2">
-                      <li>Assets: {pendingImportData?.assets?.length || 0}</li>
-                      <li>Employees: {pendingImportData?.employees?.length || 0}</li>
-                      <li>Assignments: {pendingImportData?.assignments?.length || 0}</li>
+                      {pendingImportData && Object.entries(pendingImportData).map(([key, value]: [string, any]) => {
+                        if (key === 'timestamp' || !Array.isArray(value)) return null;
+                        return (
+                          <li key={key}>
+                            {key.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}: {value.length}
+                          </li>
+                        )
+                      })}
                     </ul>
                   </div>
                   <p className="text-sm font-medium text-foreground">Are you sure you want to proceed?</p>
@@ -1654,11 +1926,12 @@ export default function Admin() {
           </div>
         </TabsContent>
         <TabsContent value="settings">
-          <Card className="max-w-2xl mx-auto shadow-sm border-border bg-card/95 backdrop-blur-sm">
-            <CardHeader>
-              <CardTitle>Organization Settings</CardTitle>
-              <CardDescription>Configure global settings for your organization.</CardDescription>
-            </CardHeader>
+          {(currentProfileRole === 'owner' || profile?.role === 'superadmin' || profile?.email === 'ykaman250@gmail.com' || profile?.email === 'adminrajpura@nvgroup.co.in') && (
+            <Card className="max-w-2xl mx-auto shadow-sm border-border bg-card/95 backdrop-blur-sm">
+              <CardHeader>
+                <CardTitle>Organization Settings</CardTitle>
+                <CardDescription>Configure global settings for your organization.</CardDescription>
+              </CardHeader>
             <CardContent>
               <form onSubmit={handleUpdateOrg} className="space-y-6">
                 <div className="space-y-2">
@@ -1670,6 +1943,40 @@ export default function Admin() {
                   />
                 </div>
                 
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Industry</label>
+                  <Select 
+                    value={orgForm.industry} 
+                    onValueChange={val => setOrgForm(prev => ({ ...prev, industry: val }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select industry" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {INDUSTRIES.map(i => (
+                        <SelectItem key={i} value={i}>{i}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Country</label>
+                  <Select 
+                    value={orgForm.country} 
+                    onValueChange={val => setOrgForm(prev => ({ ...prev, country: val }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select country" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {COUNTRIES.map(c => (
+                        <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 <div className="space-y-2">
                   <label className="text-sm font-medium">System Currency</label>
                   <Select 
@@ -1747,6 +2054,7 @@ export default function Admin() {
               </div>
             </CardContent>
           </Card>
+          )}
         </TabsContent>
       </Tabs>
     </div>

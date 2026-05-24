@@ -38,6 +38,7 @@ export function UserSettings() {
   // Password state
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   // Reset form when opened
@@ -51,6 +52,7 @@ export function UserSettings() {
       setTimeFormat(profile.preferences?.timeFormat || '12h');
       setCurrentPassword('');
       setNewPassword('');
+      setConfirmPassword('');
     }
   }, [isOpen, profile]);
 
@@ -88,6 +90,11 @@ export function UserSettings() {
       return;
     }
 
+    if (newPassword !== confirmPassword) {
+      toast.error('Passwords do not match.');
+      return;
+    }
+
     if (!user || (!user.email && user.email !== '')) return;
 
     setIsChangingPassword(true);
@@ -98,6 +105,7 @@ export function UserSettings() {
       toast.success('Password updated successfully!');
       setCurrentPassword('');
       setNewPassword('');
+      setConfirmPassword('');
     } catch (error: any) {
       if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
         toast.error('Incorrect current password.');
@@ -260,19 +268,29 @@ export function UserSettings() {
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">New Password</label>
+                <Input 
+                  type="password"
+                  placeholder="New Password (min. 6 chars)" 
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Confirm New Password</label>
                 <div className="flex gap-2">
                   <Input 
                     type="password"
-                    placeholder="New Password (min. 6 chars)" 
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Confirm New Password" 
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
                     className="flex-1"
                   />
                   <Button 
                     type="button"
                     variant="outline"
                     onClick={handleChangePassword}
-                    disabled={isChangingPassword || !newPassword || !currentPassword}
+                    disabled={isChangingPassword || !newPassword || !currentPassword || !confirmPassword || newPassword !== confirmPassword}
                     className="border-primary/20 hover:border-primary text-primary"
                   >
                     {isChangingPassword ? 'Updating...' : 'Update Password'}

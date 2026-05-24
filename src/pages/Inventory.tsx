@@ -396,7 +396,9 @@ export default function Inventory() {
 
           <Select value={locationFilter} onValueChange={setLocationFilter}>
             <SelectTrigger className="w-[160px] bg-background/50">
-              <SelectValue placeholder="Location" />
+              <SelectValue placeholder="Location">
+                {(val: any) => val === 'all' ? 'All Locations' : (locations.find(l => l.id === val)?.name || 'Location')}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Locations</SelectItem>
@@ -622,7 +624,9 @@ export default function Inventory() {
                 <label className="text-sm font-medium">Location</label>
                 <Select name="locationId" defaultValue={editingItem?.locationId} required>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select Location" />
+                    <SelectValue placeholder="Select Location">
+                      {(val: any) => val ? locations.find(l => l.id === val)?.name : 'Select Location'}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {locations.map(l => (

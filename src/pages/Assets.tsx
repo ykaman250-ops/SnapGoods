@@ -116,6 +116,7 @@ export default function Assets() {
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [viewingAsset, setViewingAsset] = useState<Asset | null>(null);
   const [assetHistory, setAssetHistory] = useState<AssetHistory[]>([]);
+  const [assetAssignments, setAssetAssignments] = useState<Assignment[]>([]);
   const [maintenanceLogs, setMaintenanceLogs] = useState<MaintenanceLog[]>([]);
   
   // Assignment state
@@ -146,17 +147,23 @@ export default function Assets() {
   const [lastDoc, setLastDoc] = useState<any>(null);
   const [hasMore, setHasMore] = useState(true);
 
+  const [activeAssignments, setActiveAssignments] = useState<Assignment[]>([]);
+
   const loadInitialData = async () => {
     try {
-      const [empRes, venRes, locRes, catRes] = await Promise.all([
+      const [empRes, venRes, locRes, catRes, assnMents] = await Promise.all([
         api.list('employees'),
         api.list('vendors'),
         api.list('locations'),
-        api.list('asset_categories')
+        api.list('asset_categories'),
+        api.list('assignments')
       ]);
       setEmployees(empRes as Employee[] || []);
       setVendors(venRes as Vendor[] || []);
       setLocations(locRes as Location[] || []);
+      
+      const allActive = (assnMents as Assignment[] || []).filter(a => a.status === 'active' || !a.returnedAt);
+      setActiveAssignments(allActive);
       
       const loadedCategories = (catRes as AssetCategory[] || []).filter(c => !c.usage || c.usage === 'asset' || c.usage === 'both');
       setCategories(loadedCategories);
@@ -231,6 +238,8 @@ export default function Assets() {
         .then(res => setAssetHistory(res as AssetHistory[]));
       api.list('maintenance_logs', [where('assetId', '==', viewingAsset.id), orderBy('date', 'desc')])
         .then(res => setMaintenanceLogs(res as MaintenanceLog[]));
+      api.list('assignments', [where('assetId', '==', viewingAsset.id), orderBy('assignedAt', 'desc')])
+        .then(res => setAssetAssignments(res as Assignment[]));
     }
   }, [viewingAsset]);
 
@@ -534,6 +543,7 @@ export default function Assets() {
       const assignmentId = generateHumanId('assignments');
       const assignmentData = {
         assetId: assigningAsset.id,
+        orgId: profile!.activeOrgId!,
         assigneeType,
         ...(assigneeType === 'employee' ? { employeeId: selectedEmployee } : { department: selectedDepartment }),
         assignedAt: new Date().toISOString(),
@@ -544,8 +554,19 @@ export default function Assets() {
       await actionManager.executeComplex(
         `Assigned asset ${assigningAsset.name}`,
         async () => {
-          await assetService.updateAsset(assigningAsset.id, updates, profile!.activeOrgId!, assigningAsset);
-          await api.set('assignments', assignmentId, assignmentData);
+          try {
+            await assetService.updateAsset(assigningAsset.id, updates, profile!.activeOrgId!, assigningAsset);
+          } catch (e: any) {
+            console.error('Update asset failed', e);
+            throw new Error('UpdateAsset Failed: ' + e.message);
+          }
+          
+          try {
+            await api.set('assignments', assignmentId, assignmentData);
+          } catch (e: any) {
+            console.error('Create assignment failed', e);
+            throw new Error('CreateAssignment Failed: ' + e.message);
+          }
         },
         async () => {
           const restoredData = { ...assigningAsset, ...updates } as Asset;
@@ -554,8 +575,19 @@ export default function Assets() {
         }
       );
 
-      const updatedDoc = await api.get('assets', assigningAsset.id);
+      let updatedDoc;
+      try {
+        updatedDoc = await api.get('assets', assigningAsset.id);
+      } catch (e: any) {
+        throw new Error('GetAsset Failed: ' + e.message);
+      }
       if (updatedDoc) setAssets(prev => prev.map(a => a.id === assigningAsset.id ? (updatedDoc as Asset) : a));
+
+      setActiveAssignments(prev => {
+        // filter out old
+        const filtered = prev.filter(a => a.assetId !== assigningAsset.id);
+        return [...filtered, { id: assignmentId, ...assignmentData } as any];
+      });
 
       toast.success('Asset assigned successfully');
       setIsAssignOpen(false);
@@ -564,7 +596,8 @@ export default function Assets() {
       setSelectedDepartment('');
       setEmployeeSearch('');
     } catch (error) {
-      toast.error('Failed to assign asset');
+      console.error("Assignment error:", error);
+      toast.error('Failed to assign asset: ' + (error instanceof Error ? error.message : String(error)));
     } finally {
       setIsSubmitting(false);
     }
@@ -583,6 +616,17 @@ export default function Assets() {
         `Changed status of ${statusAsset.name}`,
         async () => {
           await assetService.updateAsset(statusAsset.id, { status: newStatus, remarks }, profile!.activeOrgId!, statusAsset);
+          
+          if (statusAsset.status === 'assigned' && newStatus !== 'assigned') {
+            const allAssns = await api.list('assignments');
+            const activeAssn = allAssns.find((a: any) => a.assetId === statusAsset.id && !a.returnedAt);
+            if (activeAssn && activeAssn.id) {
+              await api.update('assignments', activeAssn.id, {
+                status: 'returned',
+                returnedAt: new Date().toISOString()
+              });
+            }
+          }
         },
         async () => {
           const restoredData = { ...statusAsset, status: newStatus } as Asset;
@@ -592,6 +636,10 @@ export default function Assets() {
 
       const updatedDoc = await api.get('assets', statusAsset.id);
       if (updatedDoc) setAssets(prev => prev.map(a => a.id === statusAsset.id ? (updatedDoc as Asset) : a));
+
+      if (statusAsset.status === 'assigned' && newStatus !== 'assigned') {
+        setActiveAssignments(prev => prev.filter(a => a.assetId !== statusAsset.id));
+      }
 
       toast.success('Asset status updated successfully');
       setIsStatusOpen(false);
@@ -664,13 +712,19 @@ export default function Assets() {
           };
           await assetService.updateAsset(assetId, updates, profile!.activeOrgId!, asset);
           
-          await api.create('assignments', {
+          const newAssnD = {
             assetId,
+            orgId: profile!.activeOrgId!,
             assigneeType,
             ...(assigneeType === 'employee' ? { employeeId: selectedEmployee } : { department: selectedDepartment }),
             assignedAt: new Date().toISOString(),
             status: 'active',
             remarks: remarks || ''
+          };
+          const newAssnId = await api.create('assignments', newAssnD);
+          setActiveAssignments(prev => {
+            const filtered = prev.filter(a => a.assetId !== assetId);
+            return [...filtered, { id: newAssnId, ...newAssnD } as any];
           });
 
           const updatedDoc = await api.get('assets', assetId);
@@ -683,8 +737,8 @@ export default function Assets() {
       setSelectedEmployee('');
       setSelectedDepartment('');
       setEmployeeSearch('');
-    } catch (error) {
-      toast.error('Failed to assign some assets');
+    } catch (error: any) {
+      toast.error('Failed to assign some assets: ' + (error?.message || String(error)));
     } finally {
       setIsSubmitting(false);
     }
@@ -713,12 +767,18 @@ export default function Assets() {
       }
 
       const updatedDoc = await api.get('assets', unassigningAsset.id);
-      if (updatedDoc) setAssets(prev => prev.map(a => a.id === unassigningAsset.id ? (updatedDoc as Asset) : a));
+      if (updatedDoc) {
+        setAssets(prev => prev.map(a => a.id === unassigningAsset.id ? (updatedDoc as Asset) : a));
+      }
+
+      setActiveAssignments(prev => prev.filter(a => a.assetId !== unassigningAsset.id));
+      
       toast.success('Asset unassigned successfully');
       setIsUnassignOpen(false);
       setUnassigningAsset(null);
-    } catch (error) {
-      toast.error('Failed to unassign asset');
+    } catch (error: any) {
+      console.error("Unassign error:", error);
+      toast.error('Failed to unassign asset: ' + error?.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -746,6 +806,8 @@ export default function Assets() {
             });
           }
 
+          setActiveAssignments(prev => prev.filter(a => a.assetId !== assetId));
+
           const updatedDoc = await api.get('assets', assetId);
           if (updatedDoc) setAssets(prev => prev.map(a => a.id === assetId ? (updatedDoc as Asset) : a));
         }
@@ -753,8 +815,9 @@ export default function Assets() {
       toast.success('Assets unassigned successfully');
       setIsBulkUnassignOpen(false);
       setSelectedAssets([]);
-    } catch (error) {
-      toast.error('Failed to unassign some assets');
+    } catch (error: any) {
+      console.error(error);
+      toast.error('Failed to unassign assets: ' + error?.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -799,10 +862,21 @@ export default function Assets() {
     setTimeout(async () => {
       if (undoTriggered) return;
       try {
+        const allAssns = await api.list('assignments');
         await Promise.all(assetsToUpdate.map(async (asset) => {
           await assetService.updateAsset(asset.id, { status: newStatus, remarks }, profile!.activeOrgId!, asset);
-          // Wait, background fetching could be needed? Let's just trust the backend.
+          if (asset.status === 'assigned' && newStatus !== 'assigned') {
+            const activeAssn = allAssns.find((a: any) => a.assetId === asset.id && !a.returnedAt);
+            if (activeAssn && activeAssn.id) {
+              await api.update('assignments', activeAssn.id, {
+                status: 'returned',
+                returnedAt: new Date().toISOString()
+              });
+            }
+          }
         }));
+        
+        setActiveAssignments(prev => prev.filter(a => !assetsToUpdate.some(u => u.id === a.assetId && u.status === 'assigned' && newStatus !== 'assigned')));
       } catch (error) {
         toast.error('Background bulk update failed');
         setAssets(originalAssets); // Fallback on failure
@@ -1091,7 +1165,9 @@ export default function Assets() {
                     setAssetDepartment(''); // reset department when location changes
                   }}>
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select Location" />
+                      <SelectValue placeholder="Select Location">
+                        {(val: any) => val ? locations.find(l => l.id === val)?.name : 'Select Location'}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {locations.map(l => <SelectItem key={l.id} value={l.id || ''}>{l.name}</SelectItem>)}
@@ -1210,7 +1286,9 @@ export default function Assets() {
                   <label className="text-sm font-medium">Vendor</label>
                   <Select name="vendorId" value={assetVendorId} onValueChange={setAssetVendorId}>
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select Vendor" />
+                      <SelectValue placeholder="Select Vendor">
+                        {(val: any) => val ? vendors.find(v => v.id === val)?.name : 'Select Vendor'}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {vendors.map(v => <SelectItem key={v.id} value={v.id || ''}>{v.name}</SelectItem>)}
@@ -1341,7 +1419,9 @@ export default function Assets() {
               <label className="text-sm font-medium">Select Employee</label>
               <Select value={selectedEmployee} onValueChange={setSelectedEmployee}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Choose an employee" />
+                  <SelectValue placeholder="Choose an employee">
+                    {(val: any) => val ? employees.find(e => e.id === val)?.name : 'Choose an employee'}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <div className="p-2 sticky top-0 bg-popover z-10 border-b">
@@ -1434,7 +1514,9 @@ export default function Assets() {
               <label className="text-sm font-medium">Select Employee</label>
               <Select value={selectedEmployee} onValueChange={setSelectedEmployee}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Choose an employee" />
+                  <SelectValue placeholder="Choose an employee">
+                    {(val: any) => val ? employees.find(e => e.id === val)?.name : 'Choose an employee'}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <div className="p-2 sticky top-0 bg-popover z-10 border-b">
@@ -1690,7 +1772,9 @@ export default function Assets() {
               <label className="text-sm font-medium">Vendor</label>
               <Select value={newMaintenanceLog.vendorId} onValueChange={val => setNewMaintenanceLog(prev => ({...prev, vendorId: val === 'none' ? '' : val}))}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select vendor (optional)" />
+                  <SelectValue placeholder="Select vendor (optional)">
+                    {(val: any) => val && val !== 'none' ? vendors.find(v => v.id === val)?.name : 'Select vendor (optional)'}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">None</SelectItem>
@@ -1749,7 +1833,9 @@ export default function Assets() {
                 <label className="text-sm font-medium">Vendor</label>
                 <Select value={maintenanceLogToEdit.vendorId || 'none'} onValueChange={val => setMaintenanceLogToEdit(prev => ({...prev!, vendorId: val === 'none' ? undefined : val}))}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select vendor (optional)" />
+                    <SelectValue placeholder="Select vendor (optional)">
+                      {(val: any) => val && val !== 'none' ? vendors.find(v => v.id === val)?.name : 'Select vendor (optional)'}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">None</SelectItem>
@@ -1841,19 +1927,70 @@ export default function Assets() {
               </TabsContent>
 
               <TabsContent value="assign" className="mt-4 space-y-4">
-                {viewingAsset.assignedTo ? (
-                  <div className="bg-gold-50/50 p-4 rounded-lg border border-gold-100 flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Assigned To</p>
-                      <p className="font-semibold text-lg">{employees.find(e => e.id === viewingAsset.assignedTo)?.name || 'Unknown Employee'}</p>
-                      <p className="text-xs text-muted-foreground">{employees.find(e => e.id === viewingAsset.assignedTo)?.employeeCode}</p>
+                {(() => {
+                  const activeAssns = assetAssignments.filter(a => !a.returnedAt && a.status !== 'returned');
+                  const historyAssns = assetAssignments.filter(a => a.returnedAt || a.status === 'returned');
+                  
+                  return (
+                    <div className="space-y-6">
+                      <div className="space-y-3">
+                        <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Current Assignment</h4>
+                        {activeAssns.length > 0 ? (
+                          activeAssns.map(a => (
+                            <div key={a.id} className="bg-gold-50/50 p-4 rounded-lg border border-gold-100 flex items-start flex-col gap-2">
+                              <div>
+                                <p className="text-sm text-muted-foreground whitespace-nowrap">Assigned To</p>
+                                {a.assigneeType === 'department' ? (
+                                  <>
+                                    <p className="font-semibold text-lg">{a.department}</p>
+                                    <p className="text-xs text-muted-foreground">Department</p>
+                                  </>
+                                ) : (
+                                  <>
+                                    <p className="font-semibold text-lg">{employees.find(e => e.id === a.employeeId)?.name || 'Unknown Employee'}</p>
+                                    <p className="text-xs text-muted-foreground">{employees.find(e => e.id === a.employeeId)?.employeeCode}</p>
+                                  </>
+                                )}
+                              </div>
+                              <div className="flex flex-col gap-1 mt-2 border-t border-gold-100 pt-2 w-full">
+                                <p className="text-xs text-muted-foreground">Assigned At: {formatDate(a.assignedAt)}</p>
+                                {a.remarks && <p className="text-xs text-muted-foreground">Remarks: {a.remarks}</p>}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-center py-6 text-muted-foreground border rounded-lg border-dashed">
+                            Not currently assigned.
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-3">
+                        <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider border-t pt-4">Assignment History</h4>
+                        {historyAssns.length > 0 ? (
+                          <div className="relative pl-4 space-y-4 before:absolute before:left-0 before:top-2 before:bottom-2 before:w-0.5 before:bg-muted">
+                            {historyAssns.map((h, i) => (
+                              <div key={i} className="relative">
+                                <div className="absolute -left-[21px] top-1 w-3 h-3 rounded-full bg-muted-foreground/30 border-2 border-background" />
+                                <p className="text-sm font-medium">
+                                  {h.assigneeType === 'department' ? h.department : employees.find(e => e.id === h.employeeId)?.name || 'Unknown'}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {formatDate(h.assignedAt)} - {h.returnedAt ? formatDate(h.returnedAt) : 'Returned'}
+                                </p>
+                                {h.remarks && <p className="text-xs mt-1 text-muted-foreground">Remarks: {h.remarks}</p>}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-center py-6 text-muted-foreground border rounded-lg border-dashed">
+                            No past assignments.
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-muted-foreground border rounded-lg border-dashed">
-                    Not currently assigned to any employee.
-                  </div>
-                )}
+                  );
+                })()}
               </TabsContent>
 
               <TabsContent value="financial" className="mt-4 space-y-4">
@@ -2046,6 +2183,7 @@ export default function Assets() {
               <TableHead className="font-semibold">Category</TableHead>
               <TableHead className="font-semibold">Type</TableHead>
               <TableHead className="font-semibold">Location</TableHead>
+              <TableHead className="font-semibold">Assigned To</TableHead>
               <TableHead className="font-semibold">Status</TableHead>
               <TableHead className="text-right font-semibold">Actions</TableHead>
             </TableRow>
@@ -2053,11 +2191,11 @@ export default function Assets() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Loading assets...</TableCell>
+                <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">Loading assets...</TableCell>
               </TableRow>
             ) : assetsToRender.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No assets found.</TableCell>
+                <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No assets found.</TableCell>
               </TableRow>
             ) : assetsToRender.map((asset) => (
               <TableRow key={asset.id} className="hover:bg-muted transition-colors cursor-pointer" onClick={() => setViewingAsset(asset)}>
@@ -2080,6 +2218,39 @@ export default function Assets() {
                     <span>{asset.locationId ? (locations.find(l => l.id === asset.locationId)?.name || '-') : '-'}</span>
                     {asset.department && <span className="text-xs text-muted-foreground">{asset.department}</span>}
                   </div>
+                </TableCell>
+                <TableCell>
+                  {(() => {
+                    const activeAssn = activeAssignments.find(a => a.assetId === asset.id);
+                    if (activeAssn) {
+                      if (activeAssn.assigneeType === 'department') {
+                        return (
+                          <div className="flex flex-col">
+                            <span className="font-medium text-sm text-blue-800">{activeAssn.department}</span>
+                            <span className="text-xs text-muted-foreground">Department</span>
+                          </div>
+                        );
+                      } else if (activeAssn.employeeId) {
+                        const emp = employees.find(e => e.id === activeAssn.employeeId);
+                        return (
+                          <div className="flex flex-col truncate max-w-[150px]">
+                            <span className="font-medium text-sm truncate">{emp?.name || 'Unknown Employee'}</span>
+                            <span className="text-xs text-muted-foreground truncate">{emp?.employeeCode}</span>
+                          </div>
+                        );
+                      }
+                    }
+                    if (asset.assignedTo) {
+                      const emp = employees.find(e => e.id === asset.assignedTo);
+                      return (
+                        <div className="flex flex-col truncate max-w-[150px]">
+                          <span className="font-medium text-sm truncate">{emp?.name || 'Unknown Employee'}</span>
+                          <span className="text-xs text-muted-foreground truncate">{emp?.employeeCode}</span>
+                        </div>
+                      );
+                    }
+                    return '-';
+                  })()}
                 </TableCell>
                 <TableCell>{getStatusBadge(asset.status)}</TableCell>
                 <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>

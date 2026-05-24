@@ -337,18 +337,36 @@ export const api = {
     try {
       if (!currentOrgId) return { totalStock: 0, lowStockItems: 0 };
       
-      const q = query(collection(db, 'inventory_items'), where('orgId', '==', currentOrgId));
-      const aggregateSnapshot = await getAggregateFromServer(q, {
-        totalStock: sum('quantity')
-      });
-      
-      const lowStockQ = query(collection(db, 'inventory_items'), where('orgId', '==', currentOrgId), where('quantity', '<=', 10));
-      const lowStockCount = await getCountFromServer(lowStockQ);
+      try {
+        const q = query(collection(db, 'inventory_items'), where('orgId', '==', currentOrgId));
+        const aggregateSnapshot = await getAggregateFromServer(q, {
+          totalStock: sum('quantity')
+        });
+        
+        const lowStockQ = query(collection(db, 'inventory_items'), where('orgId', '==', currentOrgId), where('quantity', '<=', 10));
+        const lowStockCount = await getCountFromServer(lowStockQ);
 
-      return {
-        totalStock: aggregateSnapshot.data().totalStock,
-        lowStockItems: lowStockCount.data().count
-      };
+        return {
+          totalStock: aggregateSnapshot.data().totalStock,
+          lowStockItems: lowStockCount.data().count
+        };
+      } catch (aggregateError) {
+        const q = query(collection(db, 'inventory_items'), where('orgId', '==', currentOrgId));
+        const snapshot = await getDocs(q);
+        
+        let totalStock = 0;
+        let lowStockItems = 0;
+        
+        snapshot.docs.forEach(doc => {
+          const qty = doc.data().quantity || 0;
+          totalStock += qty;
+          if (qty <= 10) {
+            lowStockItems++;
+          }
+        });
+        
+        return { totalStock, lowStockItems };
+      }
     } catch (error) {
       console.error('Failed to get inventory stats:', error);
       return { totalStock: 0, lowStockItems: 0 };

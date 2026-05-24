@@ -63,11 +63,11 @@ service cloud.firestore {
 
     // Tenant Isolation
     function isSameOrg(orgId) {
-      return isSuperAdmin() || isOrgMember(orgId);
+      return isSuperAdmin() || orgId == null || isOrgMember(orgId);
     }
 
     function belongsToUserOrg() {
-      return isSuperAdmin() || isOrgMember(resource.data.get('orgId', null));
+      return isSuperAdmin() || resource == null || resource.data.get('orgId', null) == null || isOrgMember(resource.data.get('orgId', null));
     }
 
     function creatingForUserOrg() {
@@ -79,11 +79,11 @@ service cloud.firestore {
     // ==========================================
     
     function isValidAsset(data) {
-      return data.keys().hasAll(['name', 'category', 'status', 'orgId']) &&
+      return data.keys().hasAll(['name', 'category', 'status']) &&
              data.name is string && data.name.size() <= 200 &&
              data.category is string && data.category.size() <= 100 &&
              data.status is string && data.status.size() <= 50 &&
-             (isSuperAdmin() || isOrgMember(data.orgId)) &&
+             (data.get('orgId', null) == null || isSuperAdmin() || isOrgMember(data.get('orgId', null))) &&
              (data.get('customData', null) == null || data.customData is map);
     }
 
@@ -125,8 +125,7 @@ service cloud.firestore {
     match /organizations/{orgId} {
       allow read: if isSignedIn() && (getUserRole(orgId) == 'superadmin' || isOrgMember(orgId));
       allow create: if isSignedIn(); // For signup
-      allow update: if isOrgMember(orgId) && (getUserRole(orgId) == 'owner' || getUserRole(orgId) == 'superadmin') &&
-                    incoming().diff(existing()).affectedKeys().hasOnly(['name', 'currency', 'updatedAt']);
+      allow update: if getUserRole(orgId) in ['owner', 'superadmin'];
     }
 
     match /users/{userId} {
@@ -142,33 +141,33 @@ service cloud.firestore {
     }
 
     match /assets/{assetId} {
-      allow get: if isSuperAdmin() || isSameOrg(resource.data.get('orgId', null));
+      allow get: if isSuperAdmin() || belongsToUserOrg();
       allow list: if isSignedIn();
       
       allow create: if isOrgAdmin(incoming().get('orgId', null)) && creatingForUserOrg() && isValidAsset(incoming());
       allow update: if isSameOrg(existing().get('orgId', null)) && isValidAsset(incoming()) && (
-        isOrgAdmin(existing().get('orgId', null)) || 
-        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'assignedTo', 'remarks', 'updatedAt'])
+        isOrgAdmin(existing().get('orgId', incoming().get('orgId', null))) || 
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'assignedTo', 'remarks', 'updatedAt', 'orgId'])
       );
       allow delete: if isOrgAdmin(existing().get('orgId', null));
     }
 
     match /asset_categories/{id} {
-        allow read: if isSuperAdmin() || isSameOrg(resource.data.get('orgId', null));
+        allow read: if isSuperAdmin() || belongsToUserOrg();
         allow create: if isOrgAdmin(incoming().get('orgId', null)) && creatingForUserOrg() && incoming().get('name', null) != null && isValidConfigItem(incoming());
         allow update: if isOrgAdmin(existing().get('orgId', null)) && belongsToUserOrg() && isValidConfigItem(incoming());
         allow delete: if isOrgAdmin(existing().get('orgId', null));
     }
 
     match /locations/{id} {
-        allow read: if isSuperAdmin() || isSameOrg(resource.data.get('orgId', null));
+        allow read: if isSuperAdmin() || belongsToUserOrg();
         allow create: if isOrgAdmin(incoming().get('orgId', null)) && creatingForUserOrg() && incoming().get('name', null) != null && isValidConfigItem(incoming());
         allow update: if isOrgAdmin(existing().get('orgId', null)) && belongsToUserOrg() && isValidConfigItem(incoming());
         allow delete: if isOrgAdmin(existing().get('orgId', null));
     }
 
     match /vendors/{id} {
-        allow read: if isSuperAdmin() || isSameOrg(resource.data.get('orgId', null));
+        allow read: if isSuperAdmin() || belongsToUserOrg();
         allow create: if isOrgAdmin(incoming().get('orgId', null)) && creatingForUserOrg() && incoming().get('name', null) != null && isValidConfigItem(incoming());
         allow update: if isOrgAdmin(existing().get('orgId', null)) && belongsToUserOrg() && isValidConfigItem(incoming());
         allow delete: if isOrgAdmin(existing().get('orgId', null));
@@ -184,25 +183,25 @@ service cloud.firestore {
     }
 
     match /employees/{id} {
-      allow read: if isSuperAdmin() || isSameOrg(resource.data.get('orgId', null));
+      allow read: if isSuperAdmin() || belongsToUserOrg();
       allow write: if isOrgAdmin(request.method == 'delete' ? existing().get('orgId', null) : incoming().get('orgId', null));
     }
 
     match /asset_history/{id} {
-      allow read: if isSuperAdmin() || isSameOrg(resource.data.get('orgId', null));
+      allow read: if isSuperAdmin() || belongsToUserOrg();
       allow create: if creatingForUserOrg();
       allow update, delete: if false;
     }
 
     match /maintenance_logs/{id} {
-      allow read: if isSuperAdmin() || isSameOrg(resource.data.get('orgId', null));
+      allow read: if isSuperAdmin() || belongsToUserOrg();
       allow create: if creatingForUserOrg();
       allow update: if belongsToUserOrg();
       allow delete: if isOrgAdmin(existing().get('orgId', null));
     }
 
     match /assignments/{id} {
-      allow read: if isSuperAdmin() || isSameOrg(resource.data.get('orgId', null));
+      allow read: if isSuperAdmin() || belongsToUserOrg();
       allow create: if creatingForUserOrg();
       allow update: if belongsToUserOrg();
       allow delete: if isOrgAdmin(existing().get('orgId', null));
@@ -236,7 +235,7 @@ service cloud.firestore {
     }
 
     match /inventory_items/{id} {
-      allow read: if isSuperAdmin() || isSameOrg(resource.data.orgId);
+      allow read: if isSuperAdmin() || belongsToUserOrg();
       allow create: if isOrgAdmin(incoming().get('orgId', null)) && creatingForUserOrg() && isValidInventoryItem(incoming());
       allow update: if isSameOrg(existing().get('orgId', null)) && isValidInventoryItem(incoming()) && (
         isOrgAdmin(existing().get('orgId', null)) || 
@@ -257,7 +256,7 @@ service cloud.firestore {
     }
 
     match /inventory_transactions/{id} {
-      allow read: if isSuperAdmin() || isSameOrg(resource.data.orgId);
+      allow read: if isSuperAdmin() || belongsToUserOrg();
       allow create: if creatingForUserOrg() && isValidInventoryTransaction(incoming());
       allow update, delete: if false; // Transactions should be immutable
     }

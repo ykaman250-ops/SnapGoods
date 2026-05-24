@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -24,6 +24,7 @@ import { Logo } from './Logo';
 import { UserSettings } from './UserSettings';
 import { useUndoRedo } from '../contexts/UndoRedoContext';
 import { OrgSwitcher } from './OrgSwitcher';
+import { useScrollPreservation } from '../lib/useScrollPreservation';
 
 import { NotificationsDropdown } from './NotificationsDropdown';
 
@@ -52,6 +53,9 @@ export default function Layout() {
     await logout();
     navigate('/login');
   };
+
+  const mainRef = useRef<HTMLElement>(null);
+  useScrollPreservation(mainRef, location.pathname);
 
   return (
     <div className="min-h-[100dvh] bg-transparent flex">
@@ -194,7 +198,7 @@ export default function Layout() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-hidden p-4 md:p-8 flex flex-col bg-zinc-50 dark:bg-zinc-950">
+        <main ref={mainRef} className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col bg-zinc-50 dark:bg-zinc-950">
           <div className="max-w-7xl mx-auto w-full flex-1 flex flex-col min-h-0 relative">
             <AnimatePresence mode="popLayout">
               <motion.div

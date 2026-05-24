@@ -48,7 +48,7 @@ import {
   DialogDescription,
   DialogTrigger 
 } from '../components/ui/dialog';
-import { api } from '../lib/api';
+import { api, generateHumanId } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { printTable } from '../lib/print';
 import { useDateFormatter } from '../lib/useDateFormatter';
@@ -120,7 +120,13 @@ export default function Assignments() {
   const getAssetName = (id: string) => {
     const asset = assets.find(a => a.id === id);
     if (!asset) return 'Unknown Asset';
-    return asset.assetCode ? `${asset.assetCode} - ${asset.name}` : asset.name;
+    return asset.name || 'Unknown Asset';
+  };
+
+  const getAssetCode = (id: string) => {
+    const asset = assets.find(a => a.id === id);
+    if (!asset) return '-';
+    return asset.assetCode || '-';
   };
 
   const getEmployeeName = (id: string) => {
@@ -153,32 +159,58 @@ export default function Assignments() {
 
       await actionManager.executeComplex('Asset assigned successfully',
         async () => {
-          if (!assignmentId) {
-            assignmentId = await api.create('assignments', {
-              assetId: selectedAsset,
-              assigneeType,
-              ...(assigneeType === 'employee' ? { employeeId: selectedEmployee } : { department: selectedDepartment }),
-              assignedAt: new Date().toISOString(),
-              status: 'active',
-              remarks: remarks || ''
-            }) as string;
-          } else {
-            await api.set('assignments', assignmentId, {
-              assetId: selectedAsset,
-              assigneeType,
-              ...(assigneeType === 'employee' ? { employeeId: selectedEmployee } : { department: selectedDepartment }),
-              assignedAt: new Date().toISOString(),
-              status: 'active',
-              remarks: remarks || ''
+          try {
+            if (!assignmentId) {
+              assignmentId = await api.create('assignments', {
+                assetId: selectedAsset,
+                orgId: profile!.activeOrgId!,
+                assigneeType,
+                ...(assigneeType === 'employee' ? { employeeId: selectedEmployee } : { department: selectedDepartment }),
+                assignedAt: new Date().toISOString(),
+                status: 'active',
+                remarks: remarks || ''
+              }) as string;
+            } else {
+              await api.set('assignments', assignmentId, {
+                assetId: selectedAsset,
+                assigneeType,
+                ...(assigneeType === 'employee' ? { employeeId: selectedEmployee } : { department: selectedDepartment }),
+                assignedAt: new Date().toISOString(),
+                status: 'active',
+                remarks: remarks || ''
+              });
+            }
+          } catch (e: any) { throw new Error('CreateAssignment Error: ' + e.message); }
+
+          try {
+            await api.update('assets', selectedAsset, { 
+              status: 'assigned',
+              assignedTo: assigneeType === 'employee' ? selectedEmployee : '',
+              orgId: profile!.activeOrgId!
             });
-          }
-          await api.update('assets', selectedAsset, { status: 'assigned' });
+          } catch (e: any) { throw new Error('UpdateAsset Error: ' + e.message); }
+          
+          try {
+            await api.set('asset_history', generateHumanId('asset_history'), {
+              assetId: selectedAsset,
+              orgId: profile!.activeOrgId!,
+              action: 'status_changed',
+              from: 'Available',
+              to: 'Assigned',
+              performedBy: profile?.name || 'system',
+              timestamp: new Date().toISOString()
+            });
+          } catch (e: any) { throw new Error('SetAssetHistory Error: ' + e.message); }
         },
         async () => {
           if (assignmentId) {
             await api.delete('assignments', assignmentId);
           }
-          await api.update('assets', selectedAsset, { status: prevAssetStatus });
+          await api.update('assets', selectedAsset, { 
+            status: prevAssetStatus,
+            assignedTo: asset?.assignedTo || '',
+            orgId: profile!.activeOrgId!
+          });
         }
       );
       
@@ -188,8 +220,9 @@ export default function Assignments() {
       setSelectedDepartment('');
       setEmployeeSearch('');
       setAssetSearch('');
-    } catch (error) {
-      toast.error('Failed to assign asset');
+    } catch (error: any) {
+      console.error(error);
+      toast.error('Failed to assign asset: ' + (error?.message || String(error)));
     } finally {
       setIsSubmitting(false);
     }
@@ -206,13 +239,32 @@ export default function Assignments() {
 
       await actionManager.executeComplex('Asset returned successfully',
         async () => {
-          await api.update('assignments', returningAssignment.id, { 
-            returnedAt: new Date().toISOString(),
-            status: 'returned'
-          });
-          await api.update('assets', returningAssignment.assetId, { 
-            status: 'available'
-          });
+          try {
+            await api.update('assignments', returningAssignment.id, { 
+              returnedAt: new Date().toISOString(),
+              status: 'returned'
+            });
+          } catch (e: any) { throw new Error('UpdateAssignment Error: ' + e.message); }
+
+          try {
+            await api.update('assets', returningAssignment.assetId, { 
+              status: 'available',
+              assignedTo: '',
+              orgId: profile!.activeOrgId!
+            });
+          } catch (e: any) { throw new Error('UpdateAsset Error: ' + e.message); }
+          
+          try {
+            await api.set('asset_history', generateHumanId('asset_history'), {
+              assetId: returningAssignment.assetId,
+              orgId: profile!.activeOrgId!,
+              action: 'status_changed',
+              from: 'Assigned',
+              to: 'Available',
+              performedBy: profile?.name || 'system',
+              timestamp: new Date().toISOString()
+            });
+          } catch (e: any) { throw new Error('SetAssetHistory Error: ' + e.message); }
         },
         async () => {
           await api.update('assignments', returningAssignment.id, { 
@@ -220,15 +272,18 @@ export default function Assignments() {
             status: prevAssignmentStatus
           });
           await api.update('assets', returningAssignment.assetId, { 
-            status: prevAssetStatus
+            status: prevAssetStatus,
+            assignedTo: asset?.assignedTo || '',
+            orgId: profile!.activeOrgId!
           });
         }
       );
       
       setIsReturnOpen(false);
       setReturningAssignment(null);
-    } catch (error) {
-      toast.error('Failed to return asset');
+    } catch (error: any) {
+      console.error(error);
+      toast.error('Failed to return asset: ' + (error?.message || String(error)));
     } finally {
       setIsSubmitting(false);
     }
@@ -250,18 +305,22 @@ export default function Assignments() {
 
   const filteredAssignments = assignments.filter(a => {
     const assetName = getAssetName(a.assetId).toLowerCase();
+    const assetCode = getAssetCode(a.assetId).toLowerCase();
     const employeeName = a.assigneeType === 'department' ? (a.department || '').toLowerCase() : getEmployeeName(a.employeeId).toLowerCase();
     const employeeCode = a.assigneeType === 'department' ? '' : getEmployeeCode(a.employeeId).toLowerCase();
     return assetName.includes(search.toLowerCase()) || 
+           assetCode.includes(search.toLowerCase()) ||
            employeeName.includes(search.toLowerCase()) ||
            employeeCode.includes(search.toLowerCase());
   });
 
   const filteredInactiveAssignments = inactiveAssignments.filter(a => {
     const assetName = getAssetName(a.assetId).toLowerCase();
+    const assetCode = getAssetCode(a.assetId).toLowerCase();
     const employeeName = a.assigneeType === 'department' ? (a.department || '').toLowerCase() : getEmployeeName(a.employeeId).toLowerCase();
     const employeeCode = a.assigneeType === 'department' ? '' : getEmployeeCode(a.employeeId).toLowerCase();
     return assetName.includes(search.toLowerCase()) || 
+           assetCode.includes(search.toLowerCase()) ||
            employeeName.includes(search.toLowerCase()) ||
            employeeCode.includes(search.toLowerCase());
   });
@@ -272,6 +331,7 @@ export default function Assignments() {
     const selectedData = assignments
       .filter(a => selectedAssignments.includes(a.id))
       .map(a => [
+        getAssetCode(a.assetId),
         getAssetName(a.assetId),
         a.assigneeType === 'department' ? `Department: ${a.department}` : getEmployeeName(a.employeeId),
         formatDate(a.assignedAt),
@@ -280,7 +340,7 @@ export default function Assignments() {
 
     printTable(
       'Selected Active Assignments',
-      ['Asset', 'Assignee', 'Assigned Date & Time', 'Status'],
+      ['Asset Code', 'Asset Name', 'Assignee', 'Assigned Date & Time', 'Status'],
       selectedData
     );
   };
@@ -289,6 +349,7 @@ export default function Assignments() {
     const selectedData = inactiveAssignments
       .filter(a => selectedHistory.includes(a.id))
       .map(a => [
+        getAssetCode(a.assetId),
         getAssetName(a.assetId),
         a.assigneeType === 'department' ? `Department: ${a.department}` : getEmployeeName(a.employeeId),
         formatDate(a.assignedAt),
@@ -298,7 +359,7 @@ export default function Assignments() {
 
     printTable(
       'Selected Assignment History',
-      ['Asset', 'Assignee', 'Assigned Date & Time', 'Returned Date & Time', 'Status'],
+      ['Asset Code', 'Asset Name', 'Assignee', 'Assigned Date & Time', 'Returned Date & Time', 'Status'],
       selectedData
     );
   };
@@ -334,7 +395,13 @@ export default function Assignments() {
                   <label className="text-sm font-medium">Select Asset</label>
                   <Select value={selectedAsset} onValueChange={setSelectedAsset}>
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Choose an available asset" />
+                      <SelectValue placeholder="Choose an available asset">
+                        {(val: any) => {
+                          if (!val) return 'Choose an available asset';
+                          const a = availableAssets.find(ast => ast.id === val);
+                          return a ? (a.assetCode ? `${a.assetCode} - ${a.name}` : a.name) : 'Choose an available asset';
+                        }}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <div className="p-2 sticky top-0 bg-popover z-10 border-b">
@@ -365,7 +432,9 @@ export default function Assignments() {
                   <label className="text-sm font-medium">Assign To</label>
                   <Select value={assigneeType} onValueChange={(val: any) => setAssigneeType(val)}>
                     <SelectTrigger className="w-full">
-                      <SelectValue />
+                      <SelectValue>
+                        {(val: any) => val === 'employee' ? 'Specific Employee' : val === 'department' ? 'Entire Department' : ''}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="employee">Specific Employee</SelectItem>
@@ -379,7 +448,13 @@ export default function Assignments() {
                     <label className="text-sm font-medium">Select Employee</label>
                     <Select value={selectedEmployee} onValueChange={setSelectedEmployee}>
                       <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Choose an employee" />
+                        <SelectValue placeholder="Choose an employee">
+                          {(val: any) => {
+                            if (!val) return 'Choose an employee';
+                            const e = employees.find(emp => emp.id === val);
+                            return e ? `${e.employeeCode} - ${e.name} (${e.designation})` : 'Choose an employee';
+                          }}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         <div className="p-2 sticky top-0 bg-popover z-10 border-b">
@@ -539,7 +614,8 @@ export default function Assignments() {
                       }}
                     />
                   </TableHead>
-                  <TableHead className="font-semibold">Asset</TableHead>
+                  <TableHead className="font-semibold">Asset Code</TableHead>
+                  <TableHead className="font-semibold">Asset Name</TableHead>
                   <TableHead className="font-semibold">Employee</TableHead>
                   <TableHead className="font-semibold">Assigned Date & Time</TableHead>
                   <TableHead className="font-semibold">Status</TableHead>
@@ -548,8 +624,8 @@ export default function Assignments() {
               </TableHeader>
               <TableBody>
                 {(() => {
-                  if (loading) return <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Loading assignments...</TableCell></TableRow>;
-                  if (filteredAssignments.length === 0) return <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No active assignments found.</TableCell></TableRow>;
+                  if (loading) return <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Loading assignments...</TableCell></TableRow>;
+                  if (filteredAssignments.length === 0) return <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No active assignments found.</TableCell></TableRow>;
                   
                   let groups: Record<string, any[]> = { 'All': filteredAssignments };
                   if (viewMode === 'department') {
@@ -579,7 +655,7 @@ export default function Assignments() {
                     <React.Fragment key={groupName}>
                       {viewMode !== 'list' && (
                         <TableRow className="bg-muted/30 hover:bg-muted/30 border-y">
-                          <TableCell colSpan={6} className="font-semibold text-primary py-3">
+                          <TableCell colSpan={7} className="font-semibold text-primary py-3">
                             {viewMode === 'department' ? 'Department: ' : 'Category: '} {groupName} 
                             <Badge variant="outline" className="ml-2">{groups[groupName].length}</Badge>
                           </TableCell>
@@ -601,6 +677,7 @@ export default function Assignments() {
                               }}
                             />
                           </TableCell>
+                          <TableCell className="font-medium text-muted-foreground">{getAssetCode(assignment.assetId)}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <Laptop className="w-4 h-4 text-muted-foreground/70" />
@@ -701,7 +778,8 @@ export default function Assignments() {
                       }}
                     />
                   </TableHead>
-                  <TableHead className="font-semibold">Asset</TableHead>
+                  <TableHead className="font-semibold">Asset Code</TableHead>
+                  <TableHead className="font-semibold">Asset Name</TableHead>
                   <TableHead className="font-semibold">Employee</TableHead>
                   <TableHead className="font-semibold">Assigned Date & Time</TableHead>
                   <TableHead className="font-semibold">Returned Date & Time</TableHead>
@@ -711,8 +789,8 @@ export default function Assignments() {
               </TableHeader>
               <TableBody>
                 {(() => {
-                  if (loading) return <TableRow><TableCell colSpan={ profile?.role === 'owner' ? 7 : 6} className="text-center py-8 text-muted-foreground">Loading assignments...</TableCell></TableRow>;
-                  if (filteredInactiveAssignments.length === 0) return <TableRow><TableCell colSpan={ profile?.role === 'owner' ? 7 : 6} className="text-center py-8 text-muted-foreground">No assignment history found.</TableCell></TableRow>;
+                  if (loading) return <TableRow><TableCell colSpan={ profile?.role === 'owner' ? 8 : 7} className="text-center py-8 text-muted-foreground">Loading assignments...</TableCell></TableRow>;
+                  if (filteredInactiveAssignments.length === 0) return <TableRow><TableCell colSpan={ profile?.role === 'owner' ? 8 : 7} className="text-center py-8 text-muted-foreground">No assignment history found.</TableCell></TableRow>;
                   
                   let groups: Record<string, any[]> = { 'All': filteredInactiveAssignments };
                   if (viewMode === 'department') {
@@ -742,7 +820,7 @@ export default function Assignments() {
                     <React.Fragment key={groupName}>
                       {viewMode !== 'list' && (
                         <TableRow className="bg-muted/30 hover:bg-muted/30 border-y">
-                          <TableCell colSpan={profile?.role === 'owner' ? 7 : 6} className="font-semibold text-primary py-3">
+                          <TableCell colSpan={profile?.role === 'owner' ? 8 : 7} className="font-semibold text-primary py-3">
                             {viewMode === 'department' ? 'Department: ' : 'Category: '} {groupName} 
                             <Badge variant="outline" className="ml-2">{groups[groupName].length}</Badge>
                           </TableCell>
@@ -764,6 +842,7 @@ export default function Assignments() {
                               }}
                             />
                           </TableCell>
+                          <TableCell className="font-medium text-muted-foreground">{getAssetCode(assignment.assetId)}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <Laptop className="w-4 h-4 text-muted-foreground/70" />
@@ -858,7 +937,11 @@ export default function Assignments() {
               <div className="space-y-4 py-4">
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <p className="text-muted-foreground">Asset</p>
+                    <p className="text-muted-foreground">Asset Code</p>
+                    <p className="font-semibold">{getAssetCode(viewingAssignment.assetId)}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Asset Name</p>
                     <p className="font-semibold">{getAssetName(viewingAssignment.assetId)}</p>
                   </div>
                   <div>

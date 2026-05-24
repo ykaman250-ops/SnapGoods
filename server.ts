@@ -184,12 +184,19 @@ async function startServer() {
         const db = getFirestore(admin.app(), databaseId);
         const userDoc = await db.collection('users').doc(decodedToken.uid).get();
         const activeOrgId = userDoc.data()?.activeOrgId;
-        const role = activeOrgId && userDoc.data()?.orgRoles ? userDoc.data().orgRoles[activeOrgId] : null;
+        let role = activeOrgId && userDoc.data()?.orgRoles ? userDoc.data().orgRoles[activeOrgId] : null;
         
-        if (!userDoc.exists || (role !== 'admin' && role !== 'owner')) {
-          return res.status(403).json({ error: 'Forbidden. Admin access required.' });
+        // Fallback: If activeOrgId is not set, but user has an owner/admin role somewhere, use that
+        if (!role && userDoc.data()?.orgRoles) {
+          const roles = Object.values(userDoc.data().orgRoles) as string[];
+          if (roles.includes('owner')) role = 'owner';
+          else if (roles.includes('admin')) role = 'admin';
         }
-        (decodedToken as any).activeOrgId = activeOrgId;
+
+        if (!userDoc.exists || (role !== 'admin' && role !== 'owner' && role !== 'superadmin')) {
+          return res.status(403).json({ error: `Forbidden. Admin access required. (Found role: ${role})` });
+        }
+        (decodedToken as any).activeOrgId = activeOrgId || (userDoc.data()?.orgRoles ? Object.keys(userDoc.data().orgRoles)[0] : null);
         (decodedToken as any).role = role;
       } else {
         (decodedToken as any).role = 'superadmin';
@@ -339,14 +346,22 @@ app.get("/api/health", (req, res) => {
 
       const customUid = generateHumanId('users');
 
-      // 1. Create User in Firebase Auth
-      const userRecord = await admin.auth().createUser({
-        uid: customUid,
-        email,
-        password,
-        displayName: adminName,
-        emailVerified: true
-      });
+      let userRecord;
+      try {
+        userRecord = await admin.auth().createUser({
+          uid: customUid,
+          email,
+          password,
+          displayName: adminName,
+          emailVerified: true
+        });
+      } catch (authError: any) {
+        if (authError.code === 'auth/email-already-exists') {
+          userRecord = await admin.auth().getUserByEmail(email);
+        } else {
+          throw authError;
+        }
+      }
 
       const db = getFirestore(admin.app(), databaseId);
       
@@ -365,21 +380,35 @@ app.get("/api/health", (req, res) => {
         userCount: 1
       });
 
-      // 3. Create User Profile
-      await db.collection('users').doc(userRecord.uid).set({
+      // 3. Create or Update User Profile
+      const userProfileRef = db.collection('users').doc(userRecord.uid);
+      const userProfileSnap = await userProfileRef.get();
+      
+      let mergedOrgRoles = { [orgRef.id]: 'owner' };
+      if (userProfileSnap.exists) {
+        mergedOrgRoles = { ...(userProfileSnap.data()?.orgRoles || {}), [orgRef.id]: 'owner' };
+      }
+
+      await userProfileRef.set({
         email,
         name: adminName,
         designation: designation || 'Owner',
         status: 'active',
-        activeOrgId: orgRef.id,
-        orgRoles: { [orgRef.id]: 'owner' },
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
-      });
+        activeOrgId: orgRef.id, // Set the newly created org as active
+        orgRoles: mergedOrgRoles,
+        createdAt: userProfileSnap.exists ? userProfileSnap.data()?.createdAt : admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
 
-      // 4. Set Custom Claims
+      // 4. Update Custom Claims without overwriting existing
+      const currentClaims = userRecord.customClaims || {};
+      const claimsOrgRoles = currentClaims.orgRoles || {};
+      claimsOrgRoles[orgRef.id] = 'owner';
+
       await admin.auth().setCustomUserClaims(userRecord.uid, {
+        ...currentClaims,
         orgId: orgRef.id,
-        role: 'owner'
+        role: 'owner',
+        orgRoles: claimsOrgRoles
       });
 
       res.status(201).json({ message: 'Organization created successfully', uid: userRecord.uid, orgId: orgRef.id });
@@ -456,28 +485,50 @@ app.get("/api/health", (req, res) => {
 
       const customUid = generateHumanId('users');
 
-      // Create user
-      const userRecord = await admin.auth().createUser({
-        uid: customUid,
-        email,
-        password,
-        displayName: name,
-        emailVerified: true
-      });
+      // Create user or fetch existing
+      let userRecord;
+      try {
+        userRecord = await admin.auth().createUser({
+          uid: customUid,
+          email,
+          password,
+          displayName: name,
+          emailVerified: true
+        });
+      } catch (authError: any) {
+        if (authError.code === 'auth/email-already-exists') {
+          userRecord = await admin.auth().getUserByEmail(email);
+        } else {
+          throw authError;
+        }
+      }
 
-      // Create profile
-      await db.collection('users').doc(userRecord.uid).set({
+      // Create or update profile
+      const userProfileRef = db.collection('users').doc(userRecord.uid);
+      const userProfileSnap = await userProfileRef.get();
+      let mergedOrgRoles = { [inviteData.orgId]: inviteData.role };
+      if (userProfileSnap.exists) {
+        mergedOrgRoles = { ...(userProfileSnap.data()?.orgRoles || {}), [inviteData.orgId]: inviteData.role };
+      }
+
+      await userProfileRef.set({
         email,
         name,
         status: 'active',
         activeOrgId: inviteData.orgId,
-        orgRoles: { [inviteData.orgId]: inviteData.role },
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
-      });
+        orgRoles: mergedOrgRoles,
+        createdAt: userProfileSnap.exists ? userProfileSnap.data()?.createdAt : admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      const currentClaims = userRecord.customClaims || {};
+      const claimsOrgRoles = currentClaims.orgRoles || {};
+      claimsOrgRoles[inviteData.orgId] = inviteData.role;
 
       await admin.auth().setCustomUserClaims(userRecord.uid, {
+        ...currentClaims,
         orgId: inviteData.orgId,
-        role: inviteData.role
+        role: inviteData.role,
+        orgRoles: claimsOrgRoles
       });
       
       if (inviteData.role === 'owner') {
@@ -493,6 +544,28 @@ app.get("/api/health", (req, res) => {
     } catch (error: any) {
       console.error('Error accepting invite:', error);
       res.status(500).json({ error: error.message || 'Internal Server Error' });
+    }
+  });
+
+  app.get("/api/debug-users", async (req, res) => {
+    try {
+      const db = getFirestore(admin.app(), databaseId);
+      const snapshot = await db.collection('users').get();
+      const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json({ users });
+    } catch (err: any) {
+      res.json({ error: err.message });
+    }
+  });
+
+  app.get("/api/debug-user/:uid", async (req, res) => {
+    try {
+      const db = getFirestore(admin.app(), databaseId);
+      const userDoc = await db.collection('users').doc(req.params.uid).get();
+      if (!userDoc.exists) return res.json({ error: "No doc" });
+      res.json({ id: userDoc.id, data: userDoc.data() });
+    } catch (err: any) {
+      res.json({ error: err.message });
     }
   });
 
@@ -544,18 +617,32 @@ app.get("/api/health", (req, res) => {
 
       // Add or update matching Firestore profile
       const newRole = role || 'viewer';
+      const adminRole = adminToken.role;
+
+      if (adminRole === 'admin' && (newRole === 'owner' || newRole === 'admin')) {
+         return res.status(403).json({ error: 'Admins cannot create owners or admins.' });
+      }
+
       const targetOrgId = adminOrgId || req.body.orgId; // Fallback if superadmin creates
       
       if (!targetOrgId) {
         return res.status(400).json({ error: 'Target organization ID is required.' });
       }
 
-      await db.collection('users').doc(userRecord.uid).set({
+      const userProfileRef = db.collection('users').doc(userRecord.uid);
+      const userProfileSnap = await userProfileRef.get();
+      let mergedOrgRoles = { [targetOrgId]: newRole };
+      if (userProfileSnap.exists) {
+        const existingRoles = userProfileSnap.data()?.orgRoles || {};
+        mergedOrgRoles = { ...existingRoles, [targetOrgId]: newRole };
+      }
+
+      await userProfileRef.set({
         email,
         name,
         status: 'active',
         activeOrgId: targetOrgId,
-        orgRoles: { [targetOrgId]: newRole },
+        orgRoles: mergedOrgRoles,
       }, { merge: true });
 
       // Set Custom Claims

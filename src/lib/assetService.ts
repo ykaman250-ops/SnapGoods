@@ -76,6 +76,7 @@ export const assetService = {
 
     batch.update(assetRef, {
       ...updates,
+      orgId, // Patches missing orgId automatically
       updatedAt: serverTimestamp()
     });
 
@@ -110,22 +111,16 @@ export const assetService = {
       timestamp: serverTimestamp()
     });
 
-    // Prune history to keep only the latest 10. We are adding 1, so keep 9 existing.
-    try {
-      const historyQuery = query(
-        collection(db, 'asset_history'),
-        where('assetId', '==', assetId),
-        orderBy('timestamp', 'desc')
-      );
-      const historyDocs = await getDocs(historyQuery);
-      if (historyDocs.docs.length > 9) {
-        for (let i = 9; i < historyDocs.docs.length; i++) {
-          batch.delete(historyDocs.docs[i].ref);
-        }
-      }
-    } catch (err) {
-      console.warn("Failed to prune history:", err);
-    }
+    const auditRef = doc(db, 'audit_logs', generateHumanId('audit_logs'));
+    batch.set(auditRef, {
+      action: 'UPDATE',
+      entityType: 'assets',
+      entityId: assetId,
+      orgId,
+      performedBy: auth.currentUser?.email || 'system',
+      timestamp: serverTimestamp(),
+      details: updates
+    });
 
     await batch.commit();
   },

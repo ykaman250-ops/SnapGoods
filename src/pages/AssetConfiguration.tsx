@@ -153,8 +153,21 @@ export default function AssetConfiguration() {
       return;
     }
 
-    if (activeTab === 'vendors' && newVendorAccountNumber.trim()) {
-      if (!/^[a-zA-Z0-9]+$/.test(newVendorAccountNumber.trim())) {
+    if (activeTab === 'locations' && !newLocationDepartments.trim()) {
+      toast.error('At least one department is required for a location');
+      return;
+    }
+
+    if (activeTab === 'vendors') {
+      if (!newVendorPhone.trim()) {
+        toast.error('Phone number is required for a vendor');
+        return;
+      }
+      if (!newVendorAddress.trim()) {
+        toast.error('Address is required for a vendor');
+        return;
+      }
+      if (newVendorAccountNumber.trim() && !/^[a-zA-Z0-9]+$/.test(newVendorAccountNumber.trim())) {
         toast.error('Account number must not contain special characters or spaces');
         return;
       }
@@ -489,7 +502,9 @@ export default function AssetConfiguration() {
           </DialogHeader>
           <div className="py-2 space-y-4 overflow-y-auto min-h-0 flex-1 px-1">
             <div className="space-y-2">
-              <label className="text-sm font-medium capitalize">Name</label>
+              <label className="text-sm font-medium capitalize">
+                Name <span className="text-red-500 font-bold ml-0.5">*</span>
+              </label>
               <Input 
                 value={newName} 
                 onChange={(e) => setNewName(e.target.value)} 
@@ -564,7 +579,9 @@ export default function AssetConfiguration() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Departments (Comma Separated)</label>
+                  <label className="text-sm font-medium">
+                    Departments (Comma Separated) <span className="text-red-500 font-bold ml-0.5">*</span>
+                  </label>
                   <Input 
                     value={newLocationDepartments} 
                     onChange={(e) => setNewLocationDepartments(e.target.value)} 
@@ -585,7 +602,9 @@ export default function AssetConfiguration() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Phone Number</label>
+                  <label className="text-sm font-medium">
+                    Phone Number <span className="text-red-500 font-bold ml-0.5">*</span>
+                  </label>
                   <Input 
                     value={newVendorPhone} 
                     onChange={(e) => setNewVendorPhone(e.target.value)} 
@@ -602,7 +621,9 @@ export default function AssetConfiguration() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Address</label>
+                  <label className="text-sm font-medium">
+                    Address <span className="text-red-500 font-bold ml-0.5">*</span>
+                  </label>
                   <Input 
                     value={newVendorAddress} 
                     onChange={(e) => setNewVendorAddress(e.target.value)} 
@@ -1044,7 +1065,19 @@ function AssetTypeDialog({ open, onOpenChange, assetType, onSave, categoryUsage 
                 <label className="text-[10px] uppercase font-bold text-muted-foreground">Type</label>
                 <Select value={newFieldType} onValueChange={(val: any) => setNewFieldType(val)}>
                   <SelectTrigger className="h-8 text-sm">
-                    <SelectValue />
+                    <SelectValue>
+                      {(val: any) => {
+                        const lookup: Record<string, string> = {
+                          text: 'Text',
+                          number: 'Number',
+                          date: 'Date',
+                          boolean: 'Yes/No',
+                          select: 'Dropdown',
+                          employee: 'Employee'
+                        };
+                        return val ? lookup[val] || val : 'Type';
+                      }}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="text">Text</SelectItem>

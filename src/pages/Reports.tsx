@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   BarChart3, 
   TrendingDown, 
@@ -114,6 +114,7 @@ function ReportDetailView({
   maintenanceLogs, 
   inventoryItems,
   inventoryTransactions,
+  employees,
   onBack, 
   formatCurrency, 
   customReports 
@@ -123,6 +124,7 @@ function ReportDetailView({
   maintenanceLogs: MaintenanceLog[], 
   inventoryItems: any[],
   inventoryTransactions: any[],
+  employees: any[],
   onBack: () => void, 
   formatCurrency: (val: number | string | undefined) => string, 
   customReports: CustomReport[] 
@@ -145,6 +147,10 @@ function ReportDetailView({
               }
               if (cId === 'assetCode') {
                 val = a.assetCode || a.id;
+              }
+              if (cId === 'assignedTo' && val) {
+                const emp = employees.find(e => e.id === val);
+                val = emp ? emp.name : val;
               }
               row[label] = val || '-';
             });
@@ -197,7 +203,7 @@ function ReportDetailView({
             Name: a.name,
             Category: a.category,
             Department: a.department || 'Unassigned',
-            Status: a.status.toUpperCase(),
+            Status: a.status?.toUpperCase() || 'UNKNOWN',
           }))
         };
       case 'status':
@@ -209,7 +215,7 @@ function ReportDetailView({
               ID: a.assetCode || a.id,
               Name: a.name,
               Department: a.department || 'Unassigned',
-              Status: a.status.toUpperCase(),
+              Status: a.status?.toUpperCase() || 'UNKNOWN',
               Cost: formatCurrency(a.purchaseCost || 0)
             }))
         };
@@ -233,7 +239,7 @@ function ReportDetailView({
             return {
               Date: new Date(tx.timestamp).toLocaleString(),
               'Item Name': item?.name || tx.itemId,
-              Action: tx.action.toUpperCase(),
+              Action: tx.action?.toUpperCase() || 'UNKNOWN',
               Qty: Math.abs(tx.quantity).toString(),
               Notes: tx.notes || '-'
             };
@@ -267,7 +273,7 @@ function ReportDetailView({
             Name: a.name,
             Category: a.category,
             Dept: a.department || 'Unassigned',
-            Status: a.status.toUpperCase(),
+            Status: a.status?.toUpperCase() || 'UNKNOWN',
             Cost: formatCurrency(a.purchaseCost || 0)
           }))
         };
@@ -343,9 +349,29 @@ export default function Reports() {
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [inventoryTransactions, setInventoryTransactions] = useState<any[]>([]);
   const [customReports, setCustomReports] = useState<CustomReport[]>([]);
+  const [employees, setEmployees] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({ department: '', category: '', startDate: '', endDate: '' });
   const [activeReport, setActiveReport] = useState<string | null>(null);
+  
+  const scrollPositionRef = useRef<number>(0);
+
+  const handleOpenReport = (id: string) => {
+    const mainEl = document.querySelector('main');
+    scrollPositionRef.current = mainEl?.scrollTop || 0;
+    setActiveReport(id);
+    setTimeout(() => {
+      if (mainEl) mainEl.scrollTop = 0;
+    }, 0);
+  };
+
+  const handleCloseReport = () => {
+    setActiveReport(null);
+    setTimeout(() => {
+      const mainEl = document.querySelector('main');
+      if (mainEl) mainEl.scrollTop = scrollPositionRef.current;
+    }, 0);
+  };
 
   const { layout: kpiLayout, toggleVisibility: toggleKpi, moveItem: moveKpi, reorderItems: reorderKpi } = useCardLayout('reports_kpi', ['value', 'networth', 'total', 'inuse', 'repair', 'inventory_items']);
   const { layout: sectionsLayout, toggleVisibility: toggleSections, moveItem: moveSections, reorderItems: reorderSections } = useCardLayout('reports_sections', ['financial', 'operational', 'compliance', 'inventory', 'custom']);
@@ -362,6 +388,7 @@ export default function Reports() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
   const [newReport, setNewReport] = useState<{name: string, description: string, columns: string[]}>({ name: '', description: '', columns: [] });
+  const [isSavingReport, setIsSavingReport] = useState(false);
 
   const isManageAllowed = profile?.role === 'admin' || profile?.role === 'owner' || profile?.role === 'superadmin';
 
@@ -402,6 +429,13 @@ export default function Reports() {
       } catch (error: any) {
         console.error("Failed to load reports data:", error);
         toast.error("Failed to load custom reports: " + (error.message || String(error)));
+      }
+
+      try {
+        const fetchedEmployees = await api.list('employees');
+        setEmployees(fetchedEmployees || []);
+      } catch (error: any) {
+        console.error("Failed to load employees:", error);
       } finally {
         setLoading(false);
       }
@@ -420,21 +454,30 @@ export default function Reports() {
     }
 
     try {
+      setIsSavingReport(true);
       if (editingReportId) {
         await api.update('custom_reports', editingReportId, newReport);
-        setCustomReports(customReports.map(r => r.id === editingReportId ? { ...newReport, id: editingReportId } : r));
+        setCustomReports(customReports.map(r => r.id === editingReportId ? { ...newReport, id: editingReportId } as any: r));
         toast.success('Custom report updated successfully');
       } else {
-        const id = await api.create('custom_reports', newReport);
-        setCustomReports([...customReports, { ...newReport, id }]);
+        const fullReport = {
+          ...newReport,
+          orgId: profile!.activeOrgId!,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        const id = await api.create('custom_reports', fullReport);
+        setCustomReports([...customReports, { ...fullReport, id } as any]);
         toast.success('Custom report created successfully');
       }
       setIsCreateModalOpen(false);
       setEditingReportId(null);
       setNewReport({ name: '', description: '', columns: [] });
-    } catch (e) {
+    } catch (e: any) {
       toast.error(`Failed to ${editingReportId ? 'update' : 'create'} report`);
       console.error(e);
+    } finally {
+      setIsSavingReport(false);
     }
   };
 
@@ -519,8 +562,21 @@ export default function Reports() {
   }
 
   return (
-    <div className="text-[oklch(0.205_0_0)] font-sans h-full overflow-y-auto">
-      <div>
+    <div className="text-[oklch(0.205_0_0)] font-sans">
+      {activeReport && (
+        <ReportDetailView 
+          reportId={activeReport} 
+          assets={filteredAssets} 
+          maintenanceLogs={maintenanceLogs}
+          inventoryItems={inventoryItems}
+          inventoryTransactions={inventoryTransactions}
+          employees={employees}
+          onBack={handleCloseReport} 
+          formatCurrency={formatCurrency}
+          customReports={customReports}
+        />
+      )}
+      <div style={{ display: activeReport ? 'none' : 'block' }}>
         
         {/* Header & Filters */}
         <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-8">
@@ -617,19 +673,6 @@ export default function Reports() {
             </select>
           </div>
         </div>
-
-        {activeReport ? (
-          <ReportDetailView 
-            reportId={activeReport} 
-            assets={filteredAssets} 
-            maintenanceLogs={maintenanceLogs}
-            inventoryItems={inventoryItems}
-            inventoryTransactions={inventoryTransactions}
-            onBack={() => setActiveReport(null)} 
-            formatCurrency={formatCurrency}
-            customReports={customReports}
-          />
-        ) : (
           <div className="animate-in fade-in duration-500">
             <div className="flex flex-wrap items-center justify-between gap-4 mb-4 mt-8">
               <h2 className="text-xl font-bold">Metrics Overview</h2>
@@ -740,29 +783,29 @@ export default function Reports() {
                   case 'financial':
                     return (
                       <ReportSection key="financial" title="Financial Reports">
-                        <ReportCard icon={<BarChart3 />} title="Asset Valuation" desc="Total original cost value and category-based financial breakdown." onClick={() => setActiveReport('valuation')} />
-                        <ReportCard icon={<TrendingDown />} title="Depreciation Analysis" desc="Per-asset depreciation calculations & estimated net worth." onClick={() => setActiveReport('depreciation')} />
+                        <ReportCard icon={<BarChart3 />} title="Asset Valuation" desc="Total original cost value and category-based financial breakdown." onClick={() => handleOpenReport('valuation')} />
+                        <ReportCard icon={<TrendingDown />} title="Depreciation Analysis" desc="Per-asset depreciation calculations & estimated net worth." onClick={() => handleOpenReport('depreciation')} />
                       </ReportSection>
                     );
                   case 'operational':
                     return (
                       <ReportSection key="operational" title="Operational Reports">
-                        <ReportCard icon={<Layers />} title="Asset Allocation" desc="Detailed views of hardware assigned to employees and departments." onClick={() => setActiveReport('allocation')} />
-                        <ReportCard icon={<Activity />} title="Asset Status Summary" desc="Breakdown of active, inactive, and repairing resources." onClick={() => setActiveReport('status')} />
+                        <ReportCard icon={<Layers />} title="Asset Allocation" desc="Detailed views of hardware assigned to employees and departments." onClick={() => handleOpenReport('allocation')} />
+                        <ReportCard icon={<Activity />} title="Asset Status Summary" desc="Breakdown of active, inactive, and repairing resources." onClick={() => handleOpenReport('status')} />
                       </ReportSection>
                     );
                   case 'compliance':
                     return (
                       <ReportSection key="compliance" title="Compliance & Maintenance">
-                        <ReportCard icon={<Wrench />} title="Maintenance Log" desc="Overview of all items currently undergoing repairs or service." onClick={() => setActiveReport('maintenance')} />
-                        <ReportCard icon={<ShieldCheck />} title="Comprehensive Audit" desc="Complete asset register for compliance and accounting." onClick={() => setActiveReport('audit')} />
+                        <ReportCard icon={<Wrench />} title="Maintenance Log" desc="Overview of all items currently undergoing repairs or service." onClick={() => handleOpenReport('maintenance')} />
+                        <ReportCard icon={<ShieldCheck />} title="Comprehensive Audit" desc="Complete asset register for compliance and accounting." onClick={() => handleOpenReport('audit')} />
                       </ReportSection>
                     );
                   case 'inventory':
                     return (
                       <ReportSection key="inventory" title="Inventory">
-                        <ReportCard icon={<Layers />} title="Inventory Stock Levels" desc="Detailed breakdown of currently available consumable inventory." onClick={() => setActiveReport('inventory_stock')} />
-                        <ReportCard icon={<Activity />} title="Inventory Transactions" desc="Log of inventory added, consumed, audited, and moved." onClick={() => setActiveReport('inventory_txs')} />
+                        <ReportCard icon={<Layers />} title="Inventory Stock Levels" desc="Detailed breakdown of currently available consumable inventory." onClick={() => handleOpenReport('inventory_stock')} />
+                        <ReportCard icon={<Activity />} title="Inventory Transactions" desc="Log of inventory added, consumed, audited, and moved." onClick={() => handleOpenReport('inventory_txs')} />
                       </ReportSection>
                     );
                   case 'custom':
@@ -775,13 +818,14 @@ export default function Reports() {
                           </div>
                         )}
                         {customReports.map(report => (
-                          <div key={report.id} className="group p-5 rounded-xl border border-[oklch(0.922_0_0)] bg-white shadow-sm hover:border-[#c5a059] hover:shadow-md transition-all cursor-pointer flex items-start justify-between gap-4" onClick={() => setActiveReport(`custom_${report.id}`)}>
+                          <div key={report.id} className="group p-5 rounded-xl border border-[oklch(0.922_0_0)] bg-white shadow-sm hover:border-[#c5a059] hover:shadow-md transition-all cursor-pointer flex items-start justify-between gap-4" onClick={() => handleOpenReport(`custom_${report.id}`)}>
                             <div className="flex items-start gap-4">
                               <div className="p-2.5 rounded-lg bg-[oklch(0.97_0_0)] text-[#c5a059] group-hover:bg-[#c5a059] group-hover:text-white transition-colors">
                                 <FileText size={22} />
                               </div>
                               <div>
-                                <h4 className="font-semibold text-[oklch(0.205_0_0)] break-words max-w-[150px]">{report.name}</h4>
+                                <h4 className="font-semibold text-[oklch(0.205_0_0)] break-words max-w-[200px]">{report.name}</h4>
+                                {report.description && <p className="text-sm text-[oklch(0.205_0_0)]/60 mt-1 leading-relaxed max-w-[200px] break-words line-clamp-2">{report.description}</p>}
                                 <span className="text-[10px] uppercase text-[#c5a059] mt-2 block opacity-0 group-hover:opacity-100 transition-opacity">View Report &rarr;</span>
                               </div>
                             </div>
@@ -839,7 +883,6 @@ export default function Reports() {
               </div>
             )}
           </div>
-        )}
       </div>
 
       {/* Create/Edit Custom Report Modal */}
@@ -892,8 +935,10 @@ export default function Reports() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateModalOpen(false)}>Cancel</Button>
-            <Button onClick={handleSaveCustomReport} className="bg-[#c5a059] text-white hover:bg-[#b08d4b]">{editingReportId ? 'Update Report' : 'Save Report'}</Button>
+            <Button variant="outline" onClick={() => setIsCreateModalOpen(false)} disabled={isSavingReport}>Cancel</Button>
+            <Button onClick={handleSaveCustomReport} disabled={isSavingReport} className="bg-[#c5a059] text-white hover:bg-[#b08d4b]">
+              {isSavingReport ? 'Saving...' : (editingReportId ? 'Update Report' : 'Save Report')}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

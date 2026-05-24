@@ -203,14 +203,24 @@ export default function Employees() {
 
       await actionManager.executeComplex('Asset unassigned successfully',
         async () => {
-          await api.update('assignments', assignmentId, { 
-            returnedAt: new Date().toISOString(),
-            status: 'returned'
-          });
+          try {
+            await api.update('assignments', assignmentId, { 
+              returnedAt: new Date().toISOString(),
+              status: 'returned'
+            });
+          } catch (e: any) {
+            throw new Error('UpdateAssignment Failed: ' + e.message);
+          }
           
-          await api.update('assets', assetId, { 
-            status: 'available'
-          });
+          try {
+            await api.update('assets', assetId, { 
+              status: 'available',
+              assignedTo: '',
+              orgId: profile?.activeOrgId
+            });
+          } catch (e: any) {
+            throw new Error('UpdateAsset Failed: ' + e.message);
+          }
         },
         async () => {
           if (prevAssignment) {
@@ -227,8 +237,8 @@ export default function Employees() {
 
       setIsUnassignOpen(false);
       setAssetToUnassign(null);
-    } catch (error) {
-      toast.error('Failed to unassign asset');
+    } catch (error: any) {
+      toast.error('Failed to unassign asset: ' + (error?.message || String(error)));
     } finally {
       setIsSubmitting(false);
     }
@@ -283,34 +293,10 @@ export default function Employees() {
       }
       
       // Run normal update
-      if (editingEmployee.employeeCode !== employeeCode) {
-        const existing = await api.get('employees', employeeCode);
-        if (existing) {
-          toast.error('Employee code already in use by another employee');
-          setIsSubmitting(false);
-          return;
-        }
-        await actionManager.executeComplex('Employee updated and code changed successfully',
-          async () => {
-            await api.set('employees', employeeCode, { ...data });
-            await api.delete('employees', editingEmployee.id);
-          },
-          async () => {
-             // Rollback not fully supported for this complex combo, this is a best effort
-            await api.set('employees', editingEmployee.id, editingEmployee);
-            await api.delete('employees', employeeCode);
-          }
-        );
-        const newDoc = await api.get('employees', employeeCode);
-        if (newDoc) {
-          setEmployees(prev => prev.filter(e => e.id !== editingEmployee.id).concat(newDoc));
-        }
-      } else {
-        await actionManager.update('employees', editingEmployee.id, data, editingEmployee, 'Employee updated and assets handled successfully');
-        const updatedDoc = await api.get('employees', editingEmployee.id);
-        if (updatedDoc) {
-          setEmployees(prev => prev.map(e => e.id === editingEmployee.id ? updatedDoc : e));
-        }
+      await actionManager.update('employees', editingEmployee.id, data, editingEmployee, 'Employee updated and assets handled successfully');
+      const updatedDoc = await api.get('employees', editingEmployee.id);
+      if (updatedDoc) {
+        setEmployees(prev => prev.map(e => e.id === editingEmployee.id ? updatedDoc : e));
       }
       
       // Refresh assignments
@@ -334,7 +320,8 @@ export default function Employees() {
     const data = {
       ...Object.fromEntries(formData.entries()),
       department: employeeDept,
-      locationId: employeeLocation
+      locationId: employeeLocation,
+      orgId: profile!.activeOrgId!
     } as any;
     const employeeCode = data.employeeCode as string;
 
@@ -362,55 +349,35 @@ export default function Employees() {
 
     setIsSubmitting(true);
     try {
+      const matches = (await api.list('employees', [where('employeeCode', '==', employeeCode)])) as any[];
+      const existing = matches.find(e => e.id !== editingEmployee?.id);
+      
+      if (existing) {
+        toast.error('Employee code already in use');
+        return;
+      }
+      
       if (editingEmployee) {
-        if (editingEmployee.employeeCode !== employeeCode) {
-          // Employee code changed, check for uniqueness
-          const existing = await api.get('employees', employeeCode);
-          if (existing) {
-            toast.error('Employee code already in use by another employee');
-            return;
-          }
-          // Create new document with new code and delete old one
-          await actionManager.executeComplex('Employee updated and code changed successfully',
-            async () => {
-              await api.set('employees', employeeCode, { ...data });
-              await api.delete('employees', editingEmployee.id);
-            },
-            async () => {
-              await api.set('employees', editingEmployee.id, editingEmployee);
-              await api.delete('employees', employeeCode);
-            }
-          );
-          
-          const newDoc = await api.get('employees', employeeCode);
-          if (newDoc) {
-            setEmployees(prev => prev.filter(e => e.id !== editingEmployee.id).concat(newDoc));
-          }
-        } else {
-          await actionManager.update('employees', editingEmployee.id, data, editingEmployee, 'Employee updated successfully');
-          const updatedDoc = await api.get('employees', editingEmployee.id);
-          if (updatedDoc) {
-            setEmployees(prev => prev.map(e => e.id === editingEmployee.id ? updatedDoc : e));
-          }
+        await actionManager.update('employees', editingEmployee.id, data, editingEmployee, 'Employee updated successfully');
+        const updatedDoc = await api.get('employees', editingEmployee.id);
+        if (updatedDoc) {
+          setEmployees(prev => prev.map(e => e.id === editingEmployee.id ? updatedDoc : e));
         }
       } else {
-        // Check for uniqueness for new employee
-        const existing = await api.get('employees', employeeCode);
-        if (existing) {
-          toast.error('Employee code already in use');
-          return;
-        }
+        let newId = '';
         await actionManager.executeComplex('Employee created successfully',
           async () => {
-            await api.set('employees', employeeCode, { ...data, status: data.status || 'active' });
+            newId = await api.create('employees', { ...data, status: data.status || 'active' }) as string;
           },
           async () => {
-            await api.delete('employees', employeeCode);
+            if (newId) await api.delete('employees', newId);
           }
         );
-        const newDoc = await api.get('employees', employeeCode);
-        if (newDoc) {
-          setEmployees(prev => [newDoc, ...prev]);
+        if (newId) {
+          const newDoc = await api.get('employees', newId);
+          if (newDoc) {
+            setEmployees(prev => [newDoc, ...prev]);
+          }
         }
       }
       setIsAddOpen(false);
@@ -510,7 +477,9 @@ export default function Employees() {
                     <label className="text-sm font-medium">Location</label>
                     <Select value={employeeLocation} onValueChange={(val) => { setEmployeeLocation(val); setEmployeeDept(''); }}>
                       <SelectTrigger>
-                        <SelectValue placeholder="Select Location" />
+                        <SelectValue placeholder="Select Location">
+                          {(val: any) => val ? locations.find(l => l.id === val)?.name : 'Select Location'}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {locations.map(l => <SelectItem key={l.id} value={l.id!}>{l.name}</SelectItem>)}
@@ -878,7 +847,13 @@ export default function Employees() {
                     <div className="pt-2" onClick={e => e.stopPropagation()}>
                       <Select value={transferTargetEmployee} onValueChange={setTransferTargetEmployee}>
                         <SelectTrigger className="bg-background">
-                          <SelectValue placeholder="Select an employee..." />
+                          <SelectValue placeholder="Select an employee...">
+                            {(val: any) => {
+                              if (!val) return 'Select an employee...';
+                              const emp = employees.find(e => e.id === val);
+                              return emp ? `${emp.name} (${emp.employeeCode})` : 'Select an employee...';
+                            }}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent className="max-h-[200px]">
                           {employees.filter(e => e.id !== offboardData?.employeeId && !e.dateOfLeaving).map(e => (
